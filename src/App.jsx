@@ -52,6 +52,7 @@ export default function App() {
   const [pasteText, setPasteText] = useState("");
   const [pasteMsg, setPasteMsg] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [selected, setSelected] = useState(null); // valor abierto en detalle
 
   // ── Función de carga reutilizable (inicial y botón Actualizar) ─────────────
   async function loadData() {
@@ -105,6 +106,11 @@ export default function App() {
       current_price: parseFloat(r.current_price) || 0,
       rating: r.rating,
       target: parseFloat(r.target) || 0,
+      note_short: r.note_short || "",
+      note_mid: r.note_mid || "",
+      note_long: r.note_long || "",
+      analysis: r.analysis || "",
+      analysis_date: r.analysis_date || todayISO(),
     }));
 
     const prevSymbols = new Set(positions.map((p) => p.symbol));
@@ -169,15 +175,18 @@ export default function App() {
   const updateDraft = (i, f, v) => setDraft((d) => d.map((r, idx) => (idx === i ? { ...r, [f]: v } : r)));
 
   // ── Rellenar filas desde texto pegado ──────────────────────────────────────
-  // Formato esperado por línea: SIMBOLO, cantidad, precio_compra, precio_actual, objetivo, rating
-  // Ej: RGTI, 442, 22.04, 25.04, 31, strong_buy
+  // Formato por línea (los bloques tras | son opcionales):
+  //   SIMBOLO, cantidad, compra, actual, objetivo, rating | corto | medio | largo | analisis
+  // Ej: RGTI, 580, 23.91, 26.58, 30, strong_buy | Volátil | Sólido | Líder | Consenso Strong Buy...
   function fillFromPaste() {
     const validRatings = Object.keys(RATING_META);
     const lines = pasteText.split("\n").map((l) => l.trim()).filter(Boolean);
     const rows = [];
     let errors = 0;
     for (const line of lines) {
-      const parts = line.split(/[,;\t]+/).map((p) => p.trim());
+      // separar por bloques con "|": el primero son los datos, el resto plazos/análisis
+      const blocks = line.split("|").map((b) => b.trim());
+      const parts = blocks[0].split(/[,;\t]+/).map((p) => p.trim());
       if (parts.length < 2 || !parts[0]) { errors++; continue; }
       let rating = (parts[5] || "hold").toLowerCase().replace(/\s+/g, "_");
       if (!validRatings.includes(rating)) rating = "hold";
@@ -188,6 +197,11 @@ export default function App() {
         current_price: parts[3] || "",
         target: parts[4] || "",
         rating,
+        note_short: blocks[1] || "",
+        note_mid: blocks[2] || "",
+        note_long: blocks[3] || "",
+        analysis: blocks[4] || "",
+        analysis_date: todayISO(),
       });
     }
     if (!rows.length) {
@@ -212,6 +226,87 @@ export default function App() {
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         input, select { font-family: ${FONT_BODY}; }
       `}</style>
+
+      {/* ── DETALLE DE VALOR (overlay) ── */}
+      {selected && (() => {
+        const p = selected;
+        const value = p.current_price * p.quantity;
+        const pnl = (p.current_price - p.avg_price) * p.quantity;
+        const pnlPct = p.avg_price ? ((p.current_price - p.avg_price) / p.avg_price) * 100 : 0;
+        const upside = p.current_price ? ((p.target - p.current_price) / p.current_price) * 100 : 0;
+        const m = RATING_META[p.rating] || RATING_META.hold;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 50, maxWidth: 480,
+            margin: "0 auto", overflowY: "auto" }}>
+            <div style={{ padding: "18px 18px 12px", borderBottom: `1px solid ${C.line}`,
+              display: "flex", alignItems: "center", gap: 12 }}>
+              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none",
+                color: C.accent, fontSize: 22, cursor: "pointer", padding: 0 }}>‹</button>
+              <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 20 }}>{p.symbol}</div>
+              <div style={{ marginLeft: "auto" }}><RatingTag rating={p.rating} /></div>
+            </div>
+
+            <div style={{ padding: 16 }}>
+              {/* Cifras */}
+              <div style={{ background: C.panel, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: C.inkDim, fontSize: 13 }}>Precio actual</span>
+                  <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700 }}>${p.current_price}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: C.inkDim, fontSize: 13 }}>Objetivo analistas</span>
+                  <span style={{ fontWeight: 700, color: upside >= 0 ? C.buy : C.sell }}>
+                    ${p.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
+                  </span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ color: C.inkDim, fontSize: 13 }}>Tu posición</span>
+                  <span>{p.quantity} uds @ ${p.avg_price}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: C.inkDim, fontSize: 13 }}>Tu P&L</span>
+                  <span style={{ color: pnl >= 0 ? C.buy : C.sell, fontWeight: 700 }}>
+                    {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
+                  </span>
+                </div>
+              </div>
+
+              {/* Plazos */}
+              {(p.note_short || p.note_mid || p.note_long) && (
+                <div style={{ marginBottom: 14 }}>
+                  {[["CORTO PLAZO", p.note_short], ["MEDIO PLAZO", p.note_mid], ["LARGO PLAZO", p.note_long]].map(([label, txt]) => txt ? (
+                    <div key={label} style={{ background: C.panel, borderRadius: 10, padding: 12, marginBottom: 8,
+                      borderLeft: `3px solid ${C.accent}` }}>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, letterSpacing: 1, color: C.accent, marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: 14 }}>{txt}</div>
+                    </div>
+                  ) : null)}
+                </div>
+              )}
+
+              {/* Análisis */}
+              {p.analysis && (
+                <div style={{ background: C.panel, borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, letterSpacing: 1, color: C.inkDim, marginBottom: 6 }}>
+                    ANÁLISIS {p.analysis_date ? `· ${p.analysis_date}` : ""}
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{p.analysis}</div>
+                </div>
+              )}
+
+              {!p.analysis && !p.note_short && !p.note_mid && !p.note_long && (
+                <div style={{ color: C.inkDim, fontSize: 13, textAlign: "center", padding: 20 }}>
+                  Sin análisis todavía. Pídele a Claude el texto actualizado y pégalo en Captura.
+                </div>
+              )}
+
+              <div style={{ fontSize: 10, color: C.inkDim, textAlign: "center" }}>
+                No es asesoramiento financiero.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <div style={{ padding: "18px 18px 12px", borderBottom: `1px solid ${C.line}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -301,11 +396,11 @@ export default function App() {
             const pnl = (p.current_price - p.avg_price) * p.quantity;
             const atTarget = p.target > 0 && p.current_price >= p.target * 0.98;
             return (
-              <div key={p.symbol} style={{ background: C.panel, borderRadius: 10, padding: 14,
-                marginBottom: 8, border: `1px solid ${C.line}` }}>
+              <div key={p.symbol} onClick={() => setSelected(p)} style={{ background: C.panel, borderRadius: 10, padding: 14,
+                marginBottom: 8, border: `1px solid ${C.line}`, cursor: "pointer" }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <div>
-                    <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>{p.symbol}</div>
+                    <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>{p.symbol} <span style={{ color: C.inkDim, fontSize: 12 }}>›</span></div>
                     <div style={{ fontSize: 12, color: C.inkDim }}>{p.quantity} uds · coste ${p.avg_price}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
@@ -341,11 +436,11 @@ export default function App() {
               ⚡ PEGADO RÁPIDO
             </div>
             <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 8 }}>
-              Pega aquí el texto que te da Claude. Una línea por valor:
-              <br/><code style={{ color: C.ink }}>SÍMBOLO, cantidad, precio_compra, precio_actual, objetivo, rating</code>
+              Pega aquí el texto que te da Claude. Una línea por valor. El análisis y los plazos son opcionales:
+              <br/><code style={{ color: C.ink }}>SÍMBOLO, cant, compra, actual, objetivo, rating | corto | medio | largo | análisis</code>
             </div>
             <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)}
-              placeholder={"RGTI, 442, 22.04, 25.04, 31, strong_buy\nQBTS, 305, 26.40, 28.34, 35, strong_buy"}
+              placeholder={"RGTI, 580, 23.91, 26.58, 30, strong_buy | Volátil | Sólido | Líder del sector | Consenso Strong Buy de 9 analistas..."}
               rows={4} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
                 borderRadius: 6, padding: 8, fontSize: 12, fontFamily: FONT_DISPLAY, resize: "vertical" }} />
             <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
