@@ -51,18 +51,37 @@ export default function App() {
   const [pendingSales, setPendingSales] = useState([]);
   const [pasteText, setPasteText] = useState("");
   const [pasteMsg, setPasteMsg] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ── Función de carga reutilizable (inicial y botón Actualizar) ─────────────
+  async function loadData() {
+    const { data: pos, error: e1 } = await supabase
+      .from("positions").select("*").eq("owner", OWNER);
+    const { data: hist, error: e2 } = await supabase
+      .from("history").select("*").eq("owner", OWNER).order("ts", { ascending: false });
+    if (e1 || e2) throw e1 || e2;
+    setPositions(pos || []);
+    setHistory(hist || []);
+    return pos || [];
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    setError(null);
+    try {
+      await loadData();
+    } catch (err) {
+      setError("No se pudieron recargar los datos. (" + err.message + ")");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   // ── Carga inicial desde Supabase ──────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
-        const { data: pos, error: e1 } = await supabase
-          .from("positions").select("*").eq("owner", OWNER);
-        const { data: hist, error: e2 } = await supabase
-          .from("history").select("*").eq("owner", OWNER).order("ts", { ascending: false });
-        if (e1 || e2) throw e1 || e2;
-        setPositions(pos || []);
-        setHistory(hist || []);
+        const pos = await loadData();
         setDraft((pos && pos.length ? pos : [blankRow()]).map((p) => ({ ...p })));
       } catch (err) {
         setError("No se pudo conectar con la base de datos. Revisa las claves de Supabase. (" + err.message + ")");
@@ -195,8 +214,20 @@ export default function App() {
       `}</style>
 
       <div style={{ padding: "18px 18px 12px", borderBottom: `1px solid ${C.line}` }}>
-        <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18 }}>
-          NORTHERN<span style={{ color: C.accent }}> ✦ </span>NOMAD
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18 }}>
+            NORTHERN<span style={{ color: C.accent }}> ✦ </span>NOMAD
+          </div>
+          <button onClick={handleRefresh} disabled={refreshing} style={{
+            background: C.panel, color: refreshing ? C.inkDim : C.accent,
+            border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 12px",
+            fontSize: 12, cursor: refreshing ? "default" : "pointer", fontFamily: FONT_DISPLAY,
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <span style={{ display: "inline-block", transform: refreshing ? "rotate(360deg)" : "none",
+              transition: "transform 0.6s" }}>↻</span>
+            {refreshing ? "..." : "Actualizar"}
+          </button>
         </div>
         <div style={{ fontSize: 11, color: C.inkDim, marginTop: 4 }}>Cartera personal · sincronizada</div>
       </div>
