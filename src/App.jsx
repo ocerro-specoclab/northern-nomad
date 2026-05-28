@@ -55,6 +55,7 @@ export default function App() {
   const [pasteMsg, setPasteMsg] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState(null); // valor abierto en detalle
+  const [activeSector, setActiveSector] = useState(null);
 
   // ── Función de carga reutilizable (inicial y botón Actualizar) ─────────────
   async function loadData() {
@@ -95,7 +96,7 @@ export default function App() {
   }, []);
 
   function blankRow() {
-    return { symbol: "", broker: "", quantity: "", avg_price: "", current_price: "", rating: "hold", target: "" };
+    return { symbol: "", broker: "", sector: "", quantity: "", avg_price: "", current_price: "", rating: "hold", target: "" };
   }
 
   // clave única de una posición: símbolo + broker
@@ -103,21 +104,33 @@ export default function App() {
 
   // ── Guardar captura: reemplaza posiciones + añade snapshot/compras ─────────
   async function processCapture() {
-    const clean = draft.filter((r) => String(r.symbol).trim()).map((r) => ({
-      owner: OWNER,
-      symbol: String(r.symbol).trim().toUpperCase(),
-      broker: (r.broker || "").trim(),
-      quantity: parseFloat(r.quantity) || 0,
-      avg_price: parseFloat(r.avg_price) || 0,
-      current_price: parseFloat(r.current_price) || 0,
-      rating: r.rating,
-      target: parseFloat(r.target) || 0,
-      note_short: r.note_short || "",
-      note_mid: r.note_mid || "",
-      note_long: r.note_long || "",
-      analysis: r.analysis || "",
-      analysis_date: r.analysis_date || todayISO(),
-    }));
+    // mapa de posiciones previas por clave, para conservar análisis si no llega nuevo
+    const prevByKey = {};
+    positions.forEach((p) => { prevByKey[posKey(p)] = p; });
+
+    const clean = draft.filter((r) => String(r.symbol).trim()).map((r) => {
+      const base = {
+        owner: OWNER,
+        symbol: String(r.symbol).trim().toUpperCase(),
+        broker: (r.broker || "").trim(),
+        quantity: parseFloat(r.quantity) || 0,
+        avg_price: parseFloat(r.avg_price) || 0,
+        current_price: parseFloat(r.current_price) || 0,
+        rating: r.rating,
+        target: parseFloat(r.target) || 0,
+      };
+      const prev = prevByKey[posKey(base)] || {};
+      // si la línea NO trae análisis/notas/sector nuevos, conserva los anteriores
+      return {
+        ...base,
+        sector: (r.sector || "").trim() || prev.sector || "",
+        note_short: r.note_short || prev.note_short || "",
+        note_mid: r.note_mid || prev.note_mid || "",
+        note_long: r.note_long || prev.note_long || "",
+        analysis: r.analysis || prev.analysis || "",
+        analysis_date: r.analysis ? (r.analysis_date || todayISO()) : (prev.analysis_date || ""),
+      };
+    });
 
     const prevKeys = new Set(positions.map(posKey));
     const newKeys = new Set(clean.map(posKey));
@@ -182,8 +195,8 @@ export default function App() {
 
   // ── Rellenar filas desde texto pegado ──────────────────────────────────────
   // Formato por línea (los bloques tras | son opcionales):
-  //   SIMBOLO, broker, cantidad, compra, actual, objetivo, rating | corto | medio | largo | analisis
-  // Ej: RGTI, eToro, 441.86, 23.04, 26.58, 30, strong_buy | Volátil | Sólido | Líder | ...
+  //   SIMBOLO, broker, sector, cantidad, compra, actual, objetivo, rating | corto | medio | largo | analisis
+  // Ej: RGTI, eToro, Cuántica, 441.86, 23.04, 26.58, 30, strong_buy | Volátil | Sólido | Líder | ...
   function fillFromPaste() {
     const validRatings = Object.keys(RATING_META);
     const lines = pasteText.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -194,15 +207,16 @@ export default function App() {
       const blocks = line.split("|").map((b) => b.trim());
       const parts = blocks[0].split(/[,;\t]+/).map((p) => p.trim());
       if (parts.length < 2 || !parts[0]) { errors++; continue; }
-      let rating = (parts[6] || "hold").toLowerCase().replace(/\s+/g, "_");
+      let rating = (parts[7] || "hold").toLowerCase().replace(/\s+/g, "_");
       if (!validRatings.includes(rating)) rating = "hold";
       rows.push({
         symbol: parts[0].toUpperCase(),
         broker: parts[1] || "",
-        quantity: parts[2] || "",
-        avg_price: parts[3] || "",
-        current_price: parts[4] || "",
-        target: parts[5] || "",
+        sector: parts[2] || "",
+        quantity: parts[3] || "",
+        avg_price: parts[4] || "",
+        current_price: parts[5] || "",
+        target: parts[6] || "",
         rating,
         note_short: blocks[1] || "",
         note_mid: blocks[2] || "",
@@ -426,43 +440,62 @@ export default function App() {
               Sin posiciones. Ve a "Captura".
             </div>
           )}
-          {positions.map((p, idx) => {
-            const value = p.current_price * p.quantity;
-            const pnl = (p.current_price - p.avg_price) * p.quantity;
-            const pnlPct = p.avg_price ? ((p.current_price - p.avg_price) / p.avg_price) * 100 : 0;
-            const m = RATING_META[p.rating] || RATING_META.hold;
-            return (
-              <div key={posKey(p)} onClick={() => setSelected(p)} className="nn-card nn-press"
-                style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10,
-                  cursor: "pointer", animationDelay: `${idx * 0.05}s`,
-                  borderLeft: `3px solid ${m.color}` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    {/* avatar circular con inicial */}
-                    <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
-                      {p.symbol.slice(0, 2)}
-                    </div>
-                    <div>
-                      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
-                        {p.symbol}
-                        {p.broker ? <span style={{ fontSize: 9, fontWeight: 600, color: C.inkDim,
-                          background: C.panelHi, borderRadius: 100, padding: "2px 7px" }}>{p.broker}</span> : null}
+          {(() => {
+            // sectores presentes (los que tienen al menos una posición)
+            const sectors = [...new Set(positions.map((p) => (p.sector || "Sin sector")))];
+            const cur = (activeSector && sectors.includes(activeSector)) ? activeSector : sectors[0];
+            return positions.length > 0 && sectors.length > 0 ? (
+              <>
+                {sectors.length > 1 && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 12, overflowX: "auto", paddingBottom: 2 }}>
+                    {sectors.map((s) => (
+                      <button key={s} onClick={() => setActiveSector(s)} className="nn-press" style={{
+                        flexShrink: 0, padding: "8px 14px", borderRadius: 100, border: "none",
+                        background: s === cur ? C.accent : C.panel, color: s === cur ? "#0b0f0c" : C.inkDim,
+                        fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                      }}>{s}</button>
+                    ))}
+                  </div>
+                )}
+                {positions.filter((p) => (p.sector || "Sin sector") === cur).map((p, idx) => {
+                  const value = p.current_price * p.quantity;
+                  const pnl = (p.current_price - p.avg_price) * p.quantity;
+                  const pnlPct = p.avg_price ? ((p.current_price - p.avg_price) / p.avg_price) * 100 : 0;
+                  const m = RATING_META[p.rating] || RATING_META.hold;
+                  return (
+                    <div key={posKey(p)} onClick={() => setSelected(p)} className="nn-card nn-press"
+                      style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10,
+                        cursor: "pointer", animationDelay: `${idx * 0.05}s`,
+                        borderLeft: `3px solid ${m.color}` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
+                            {p.symbol.slice(0, 2)}
+                          </div>
+                          <div>
+                            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
+                              {p.symbol}
+                              {p.broker ? <span style={{ fontSize: 9, fontWeight: 600, color: C.inkDim,
+                                background: C.panelHi, borderRadius: 100, padding: "2px 7px" }}>{p.broker}</span> : null}
+                            </div>
+                            <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>{p.quantity} uds · ${p.avg_price}</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                          <div style={{ color: pnl >= 0 ? C.buy : C.sell, fontSize: 12, fontWeight: 600 }}>
+                            {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
+                          </div>
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>{p.quantity} uds · ${p.avg_price}</div>
                     </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                    <div style={{ color: pnl >= 0 ? C.buy : C.sell, fontSize: 12, fontWeight: 600 }}>
-                      {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+                  );
+                })}
+              </>
+            ) : null;
+          })()}
         </div>
       )}
 
@@ -480,10 +513,10 @@ export default function App() {
             </div>
             <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 8 }}>
               Pega aquí el texto que te da Claude. Una línea por valor. El análisis y los plazos son opcionales:
-              <br/><code style={{ color: C.ink }}>SÍMBOLO, broker, cant, compra, actual, objetivo, rating | corto | medio | largo | análisis</code>
+              <br/><code style={{ color: C.ink }}>SÍMBOLO, broker, sector, cant, compra, actual, objetivo, rating | corto | medio | largo | análisis</code>
             </div>
             <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)}
-              placeholder={"RGTI, eToro, 441.86, 23.04, 26.58, 30, strong_buy | Volátil | Sólido | Líder del sector | Consenso Strong Buy de 9 analistas..."}
+              placeholder={"RGTI, eToro, Cuántica, 441.86, 23.04, 26.58, 30, strong_buy | Volátil | Sólido | Líder del sector | Consenso Strong Buy de 9 analistas..."}
               rows={4} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
                 borderRadius: 6, padding: 8, fontSize: 12, fontFamily: FONT_DISPLAY, resize: "vertical" }} />
             <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
@@ -497,6 +530,7 @@ export default function App() {
               <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                 <input placeholder="Símbolo" value={r.symbol} onChange={(e) => updateDraft(i, "symbol", e.target.value)} style={inp(1.2)} />
                 <input placeholder="Broker" value={r.broker || ""} onChange={(e) => updateDraft(i, "broker", e.target.value)} style={inp(1)} />
+                <input placeholder="Sector" value={r.sector || ""} onChange={(e) => updateDraft(i, "sector", e.target.value)} style={inp(1)} />
                 <input placeholder="Cantidad" type="number" value={r.quantity} onChange={(e) => updateDraft(i, "quantity", e.target.value)} style={inp(1)} />
               </div>
               <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
