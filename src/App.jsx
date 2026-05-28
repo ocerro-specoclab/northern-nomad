@@ -538,3 +538,19 @@ export default function App() {
         borderTop: `1px solid ${C.line}`, marginTop: 10 }}>
         Prototipo MVP · datos manuales · no es asesoramiento financiero
       </div>
+    </div>
+  );
+}
+
+function inp(flex) {
+  return { flex, minWidth: 0, background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
+    borderRadius: 6, padding: "8px", fontSize: 13 };
+}
+function btn(color) {
+  return { flex: 1, background: color, color: "#06121a", border: "none", borderRadius: 8,
+    padding: "11px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT_DISPLAY, letterSpacing: 1 };
+}
+function btnGhost() {
+  return { background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: 8,
+    padding: "11px 16px", fontSize: 13, cursor: "pointer" };
+}
