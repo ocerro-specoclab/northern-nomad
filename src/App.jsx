@@ -49,6 +49,8 @@ export default function App() {
   const [error, setError] = useState(null);
   const [draft, setDraft] = useState([]);
   const [pendingSales, setPendingSales] = useState([]);
+  const [pasteText, setPasteText] = useState("");
+  const [pasteMsg, setPasteMsg] = useState("");
 
   // ── Carga inicial desde Supabase ──────────────────────────────────────────
   useEffect(() => {
@@ -146,6 +148,37 @@ export default function App() {
 
   const dismissSale = (idx) => setPendingSales((ps) => ps.filter((_, i) => i !== idx));
   const updateDraft = (i, f, v) => setDraft((d) => d.map((r, idx) => (idx === i ? { ...r, [f]: v } : r)));
+
+  // ── Rellenar filas desde texto pegado ──────────────────────────────────────
+  // Formato esperado por línea: SIMBOLO, cantidad, precio_compra, precio_actual, objetivo, rating
+  // Ej: RGTI, 442, 22.04, 25.04, 31, strong_buy
+  function fillFromPaste() {
+    const validRatings = Object.keys(RATING_META);
+    const lines = pasteText.split("\n").map((l) => l.trim()).filter(Boolean);
+    const rows = [];
+    let errors = 0;
+    for (const line of lines) {
+      const parts = line.split(/[,;\t]+/).map((p) => p.trim());
+      if (parts.length < 2 || !parts[0]) { errors++; continue; }
+      let rating = (parts[5] || "hold").toLowerCase().replace(/\s+/g, "_");
+      if (!validRatings.includes(rating)) rating = "hold";
+      rows.push({
+        symbol: parts[0].toUpperCase(),
+        quantity: parts[1] || "",
+        avg_price: parts[2] || "",
+        current_price: parts[3] || "",
+        target: parts[4] || "",
+        rating,
+      });
+    }
+    if (!rows.length) {
+      setPasteMsg("No se reconoció ninguna línea. Revisa el formato.");
+      return;
+    }
+    setDraft(rows);
+    setPasteMsg(`✓ ${rows.length} valores cargados${errors ? ` (${errors} líneas ignoradas)` : ""}. Revísalos y pulsa Guardar captura.`);
+    setPasteText("");
+  }
 
   const totalValue = positions.reduce((s, p) => s + p.current_price * p.quantity, 0);
   const totalCost = positions.reduce((s, p) => s + p.avg_price * p.quantity, 0);
@@ -269,6 +302,27 @@ export default function App() {
           <div style={{ fontSize: 13, color: C.inkDim, marginBottom: 12 }}>
             Introduce tu cartera tal como aparece hoy. Al guardar, la app detecta ventas y registra el snapshot del consenso.
           </div>
+
+          {/* Pegado rápido: texto que genera Claude desde un pantallazo */}
+          <div style={{ background: C.panel, borderRadius: 10, padding: 12, marginBottom: 14,
+            border: `1px solid ${C.accent}` }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, letterSpacing: 1, color: C.accent, marginBottom: 6 }}>
+              ⚡ PEGADO RÁPIDO
+            </div>
+            <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 8 }}>
+              Pega aquí el texto que te da Claude. Una línea por valor:
+              <br/><code style={{ color: C.ink }}>SÍMBOLO, cantidad, precio_compra, precio_actual, objetivo, rating</code>
+            </div>
+            <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)}
+              placeholder={"RGTI, 442, 22.04, 25.04, 31, strong_buy\nQBTS, 305, 26.40, 28.34, 35, strong_buy"}
+              rows={4} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
+                borderRadius: 6, padding: 8, fontSize: 12, fontFamily: FONT_DISPLAY, resize: "vertical" }} />
+            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
+              <button onClick={fillFromPaste} style={btn(C.accent)}>Rellenar filas</button>
+              {pasteMsg && <span style={{ fontSize: 12, color: pasteMsg.startsWith("✓") ? C.buy : C.sell }}>{pasteMsg}</span>}
+            </div>
+          </div>
+
           {draft.map((r, i) => (
             <div key={i} style={{ background: C.panel, borderRadius: 10, padding: 12, marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
