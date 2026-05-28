@@ -112,6 +112,9 @@ export default function App() {
   const [cartUpdateText, setCartUpdateText] = useState("");
   const [watchUpdateText, setWatchUpdateText] = useState("");
   const [reportMsg, setReportMsg] = useState("");
+  const [expandedReport, setExpandedReport] = useState(null);
+  const [showAddManual, setShowAddManual] = useState(false);
+  const [manualRow, setManualRow] = useState(null);
 
   // ── Función de carga reutilizable (inicial y botón Actualizar) ─────────────
   async function loadData() {
@@ -440,6 +443,44 @@ export default function App() {
     } catch (err) { setError("Error al borrar: " + err.message); }
   }
 
+  // Añadir o actualizar un valor a mano (un solo valor, sin reemplazar la cartera)
+  async function saveManualPosition() {
+    if (!manualRow || !manualRow.symbol.trim()) {
+      setError("Falta el símbolo.");
+      return;
+    }
+    try {
+      const key = `${manualRow.symbol.toUpperCase()}@${(manualRow.broker || "").toLowerCase()}`;
+      const prev = positions.find((p) => posKey(p) === key) || {};
+      const row = {
+        owner: OWNER,
+        symbol: manualRow.symbol.trim().toUpperCase(),
+        broker: (manualRow.broker || "").trim(),
+        sector: (manualRow.sector || "").trim() || prev.sector || "",
+        quantity: parseFloat(manualRow.quantity) || 0,
+        avg_price: parseFloat(manualRow.avg_price) || 0,
+        current_price: parseFloat(manualRow.current_price) || 0,
+        rating: manualRow.rating || "hold",
+        target: parseFloat(manualRow.target) || 0,
+        note_short: prev.note_short || "",
+        note_mid: prev.note_mid || "",
+        note_long: prev.note_long || "",
+        analysis: prev.analysis || "",
+        analysis_date: prev.analysis_date || "",
+      };
+      // upsert manual: borrar la posición con esa clave y volver a insertar
+      if (prev.id !== undefined) {
+        await supabase.from("positions").delete().eq("id", prev.id);
+      }
+      await supabase.from("positions").insert([row]);
+      await loadData();
+      setShowAddManual(false);
+      setManualRow(null);
+    } catch (err) {
+      setError("Error al añadir: " + err.message);
+    }
+  }
+
   const totalValue = positions.reduce((s, p) => s + p.current_price * p.quantity, 0);
   const totalCost = positions.reduce((s, p) => s + p.avg_price * p.quantity, 0);
   const totalPnl = totalValue - totalCost;
@@ -613,7 +654,7 @@ export default function App() {
 
       <div style={{ display: "flex", gap: 6, padding: "0 18px 8px", position: "relative", zIndex: 1,
         overflowX: "auto" }}>
-        {["cartera", "seguimiento", "captura", "informes", "historico"].map((t) => (
+        {["cartera", "informes", "historico"].map((t) => (
           <button key={t} onClick={() => setTab(t)} className="nn-press" style={{
             flexShrink: 0, padding: "10px 16px", borderRadius: 100,
             background: tab === t ? C.accent : C.panel, border: "none",
@@ -707,23 +748,37 @@ export default function App() {
             </div>
           )}
           {(() => {
-            // sectores presentes (los que tienen al menos una posición)
+            // sectores presentes (los que tienen al menos una posición) + tab especial "Seguimiento"
             const sectors = [...new Set(positions.map((p) => (p.sector || "Sin sector")))];
-            const cur = (activeSector && sectors.includes(activeSector)) ? activeSector : sectors[0];
-            return positions.length > 0 && sectors.length > 0 ? (
+            const SEGUIMIENTO_KEY = "__watch__";
+            const allTabs = [...sectors, ...(watchlist.length > 0 ? [SEGUIMIENTO_KEY] : [])];
+            const cur = (activeSector && allTabs.includes(activeSector)) ? activeSector : (sectors[0] || SEGUIMIENTO_KEY);
+            const showingWatch = cur === SEGUIMIENTO_KEY;
+            return allTabs.length > 0 ? (
               <>
-                {sectors.length > 1 && (
+                {allTabs.length > 1 && (
                   <div style={{ display: "flex", gap: 8, marginBottom: 12, overflowX: "auto", paddingBottom: 2 }}>
-                    {sectors.map((s) => (
-                      <button key={s} onClick={() => setActiveSector(s)} className="nn-press" style={{
-                        flexShrink: 0, padding: "8px 14px", borderRadius: 100, border: "none",
-                        background: s === cur ? C.accent : C.panel, color: s === cur ? "#0b0f0c" : C.inkDim,
-                        fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                      }}>{s}</button>
-                    ))}
+                    {allTabs.map((s) => {
+                      const isWatch = s === SEGUIMIENTO_KEY;
+                      const active = s === cur;
+                      return (
+                        <button key={s} onClick={() => setActiveSector(s)} className="nn-press" style={{
+                          flexShrink: 0, padding: "8px 14px", borderRadius: 100,
+                          border: isWatch ? `1.5px dashed ${C.accent}` : "none",
+                          background: active ? (isWatch ? "transparent" : C.accent) : (isWatch ? `${C.accent}12` : C.panel),
+                          color: active ? (isWatch ? C.accent : "#0b0f0c") : (isWatch ? C.accent : C.inkDim),
+                          fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                          display: "flex", alignItems: "center", gap: 5,
+                        }}>
+                          {isWatch && <span>◉</span>}
+                          {isWatch ? `Seguimiento · ${watchlist.length}` : s}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
-                {positions.filter((p) => (p.sector || "Sin sector") === cur).map((p, idx) => {
+                {/* Posiciones por sector */}
+                {!showingWatch && positions.filter((p) => (p.sector || "Sin sector") === cur).map((p, idx) => {
                   const value = p.current_price * p.quantity;
                   const pnl = (p.current_price - p.avg_price) * p.quantity;
                   const pnlPct = p.avg_price ? ((p.current_price - p.avg_price) / p.avg_price) * 100 : 0;
@@ -759,61 +814,108 @@ export default function App() {
                     </div>
                   );
                 })}
+                {/* Vista de Seguimiento (cuando la sub-pestaña activa es Seguimiento) */}
+                {showingWatch && (
+                  <>
+                    <div style={{ fontSize: 11, color: C.accent, marginBottom: 10, fontStyle: "italic", lineHeight: 1.4 }}>
+                      Valores en seguimiento — no comprados todavía. Esta pestaña no se incluye en el valor total ni en la gráfica.
+                    </div>
+                    {watchlist.map((w, idx) => {
+                      const upside = w.current_price ? ((w.target - w.current_price) / w.current_price) * 100 : 0;
+                      const m = RATING_META[w.rating] || RATING_META.hold;
+                      return (
+                        <div key={w.id} className="nn-card" style={{
+                          background: "transparent", border: `1.5px dashed ${C.accent}55`,
+                          borderRadius: 18, padding: 16, marginBottom: 10, animationDelay: `${idx * 0.05}s` }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
+                              <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
+                                {w.symbol.slice(0, 2)}
+                              </div>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15 }}>{w.symbol}</div>
+                                <div style={{ fontSize: 11, color: C.inkDim }}>{w.sector || "—"}</div>
+                              </div>
+                            </div>
+                            <div style={{ textAlign: "right", marginRight: 8 }}>
+                              <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${w.current_price}</div>
+                              <div style={{ color: upside >= 0 ? C.buy : C.sell, fontSize: 11, fontWeight: 600 }}>
+                                obj ${w.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
+                              </div>
+                            </div>
+                            <button onClick={() => deleteWatch(w.id)} style={{ background: "none", border: "none",
+                              color: C.inkDim, fontSize: 18, cursor: "pointer", padding: 0 }}>×</button>
+                          </div>
+                          {(w.note_short || w.note_mid || w.note_long) && (
+                            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}`, display: "flex", flexDirection: "column", gap: 6 }}>
+                              {w.note_short && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>CORTO</b> {w.note_short}</div>}
+                              {w.note_mid && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>MEDIO</b> {w.note_mid}</div>}
+                              {w.note_long && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>LARGO</b> {w.note_long}</div>}
+                            </div>
+                          )}
+                          {w.analysis && (
+                            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.line}`, fontSize: 12, lineHeight: 1.4, color: C.inkDim }}>
+                              {w.analysis}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </>
             ) : null;
           })()}
+
+          {/* Botón flotante para añadir un valor a mano */}
+          <button onClick={() => { setManualRow({ symbol: "", broker: "", sector: "", quantity: "", avg_price: "", current_price: "", target: "", rating: "hold" }); setShowAddManual(true); }}
+            className="nn-press" style={{
+            position: "fixed", bottom: 24, right: "max(24px, calc((100vw - 480px) / 2 + 24px))",
+            width: 56, height: 56, borderRadius: 28, background: C.accent, color: "#0b0f0c",
+            border: "none", fontSize: 28, fontWeight: 700, cursor: "pointer", zIndex: 40,
+            boxShadow: `0 8px 24px ${C.accent}55`, fontFamily: FONT_DISPLAY,
+            display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1,
+          }} aria-label="Añadir valor a mano">+</button>
         </div>
       )}
 
-      {!loading && tab === "captura" && (
-        <div style={{ padding: 14 }}>
-          <div style={{ fontSize: 13, color: C.inkDim, marginBottom: 12 }}>
-            Introduce tu cartera tal como aparece hoy. Al guardar, la app detecta ventas y registra el snapshot del consenso.
-          </div>
-
-          {/* Pegado rápido: texto que genera Claude desde un pantallazo */}
-          <div style={{ background: C.panel, borderRadius: 10, padding: 12, marginBottom: 14,
-            border: `1px solid ${C.accent}` }}>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, letterSpacing: 1, color: C.accent, marginBottom: 6 }}>
-              ⚡ PEGADO RÁPIDO
+      {/* Modal añadir valor a mano */}
+      {showAddManual && manualRow && (
+        <div onClick={() => setShowAddManual(false)} style={{ position: "fixed", inset: 0,
+          background: "rgba(0,0,0,0.75)", zIndex: 60, display: "flex", alignItems: "flex-end",
+          justifyContent: "center" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, width: "100%",
+            maxWidth: 480, borderRadius: "24px 24px 0 0", padding: 22, animation: "nn-rise 0.3s ease both" }}>
+            <div style={{ width: 38, height: 4, background: C.line, borderRadius: 100, margin: "0 auto 16px" }} />
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18, marginBottom: 14 }}>
+              Añadir valor a mano
             </div>
-            <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 8 }}>
-              Pega aquí el texto que te da Claude. Una línea por valor. El análisis y los plazos son opcionales:
-              <br/><code style={{ color: C.ink }}>SÍMBOLO, broker, sector, cant, compra, actual, objetivo, rating | corto | medio | largo | análisis</code>
+            <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 14, lineHeight: 1.4 }}>
+              Para un valor puntual sin pegar texto. Si ya existe el símbolo+broker, se actualizan precios y se conserva el análisis.
             </div>
-            <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)}
-              placeholder={"RGTI, eToro, Cuántica, 441.86, 23.04, 26.58, 30, strong_buy | Volátil | Sólido | Líder del sector | Consenso Strong Buy de 9 analistas..."}
-              rows={4} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
-                borderRadius: 6, padding: 8, fontSize: 12, fontFamily: FONT_DISPLAY, resize: "vertical" }} />
-            <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
-              <button onClick={fillFromPaste} style={btn(C.accent)}>Rellenar filas</button>
-              {pasteMsg && <span style={{ fontSize: 12, color: pasteMsg.startsWith("✓") ? C.buy : C.sell }}>{pasteMsg}</span>}
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <input placeholder="Símbolo *" value={manualRow.symbol} onChange={(e) => setManualRow({ ...manualRow, symbol: e.target.value })} style={inp(1)} autoFocus />
+              <input placeholder="Broker" value={manualRow.broker} onChange={(e) => setManualRow({ ...manualRow, broker: e.target.value })} style={inp(1)} />
             </div>
-          </div>
-
-          {draft.map((r, i) => (
-            <div key={i} style={{ background: C.panel, borderRadius: 10, padding: 12, marginBottom: 8 }}>
-              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                <input placeholder="Símbolo" value={r.symbol} onChange={(e) => updateDraft(i, "symbol", e.target.value)} style={inp(1.2)} />
-                <input placeholder="Broker" value={r.broker || ""} onChange={(e) => updateDraft(i, "broker", e.target.value)} style={inp(1)} />
-                <input placeholder="Sector" value={r.sector || ""} onChange={(e) => updateDraft(i, "sector", e.target.value)} style={inp(1)} />
-                <input placeholder="Cantidad" type="number" value={r.quantity} onChange={(e) => updateDraft(i, "quantity", e.target.value)} style={inp(1)} />
-              </div>
-              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                <input placeholder="P. compra" type="number" value={r.avg_price} onChange={(e) => updateDraft(i, "avg_price", e.target.value)} style={inp(1)} />
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <input placeholder="P. actual" type="number" value={r.current_price} onChange={(e) => updateDraft(i, "current_price", e.target.value)} style={inp(1)} />
-                <input placeholder="Objetivo" type="number" value={r.target} onChange={(e) => updateDraft(i, "target", e.target.value)} style={inp(1)} />
-                <select value={r.rating} onChange={(e) => updateDraft(i, "rating", e.target.value)} style={inp(1.2)}>
-                  {Object.keys(RATING_META).map((k) => <option key={k} value={k}>{RATING_META[k].label}</option>)}
-                </select>
-              </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <input placeholder="Sector" value={manualRow.sector} onChange={(e) => setManualRow({ ...manualRow, sector: e.target.value })} style={inp(2)} />
+              <input placeholder="Cantidad" type="number" value={manualRow.quantity} onChange={(e) => setManualRow({ ...manualRow, quantity: e.target.value })} style={inp(1)} />
             </div>
-          ))}
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button onClick={() => setDraft((d) => [...d, blankRow()])} style={btnGhost()}>+ Fila</button>
-            <button onClick={processCapture} style={btn(C.accent)}>Guardar captura</button>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <input placeholder="P. compra" type="number" value={manualRow.avg_price} onChange={(e) => setManualRow({ ...manualRow, avg_price: e.target.value })} style={inp(1)} />
+              <input placeholder="P. actual" type="number" value={manualRow.current_price} onChange={(e) => setManualRow({ ...manualRow, current_price: e.target.value })} style={inp(1)} />
+              <input placeholder="Objetivo" type="number" value={manualRow.target} onChange={(e) => setManualRow({ ...manualRow, target: e.target.value })} style={inp(1)} />
+            </div>
+            <select value={manualRow.rating} onChange={(e) => setManualRow({ ...manualRow, rating: e.target.value })}
+              style={{ ...inp(1), width: "100%", marginBottom: 14 }}>
+              {Object.keys(RATING_META).map((k) => <option key={k} value={k}>{RATING_META[k].label}</option>)}
+            </select>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setShowAddManual(false)} style={btnGhost()}>Cancelar</button>
+              <button onClick={saveManualPosition} style={btn(C.accent)}>Guardar</button>
+            </div>
           </div>
         </div>
       )}
@@ -831,7 +933,7 @@ export default function App() {
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <span style={{ fontFamily: FONT_DISPLAY, fontSize: 11, letterSpacing: 1,
                     color: h.type === "buy" ? C.buy : h.type === "sell" ? C.sell : C.accent }}>
-                    {h.type === "buy" ? "COMPRA" : h.type === "sell" ? "VENTA" : "SNAPSHOT CONSENSO"}
+                    {h.type === "buy" ? "COMPRA" : h.type === "sell" ? "VENTA" : "ACTUALIZACIÓN"}
                   </span>
                   <span style={{ fontSize: 11, color: C.inkDim }}>{h.date}</span>
                 </div>
@@ -905,74 +1007,50 @@ export default function App() {
               Sin informes guardados todavía.
             </div>
           )}
-          {reports.map((r) => (
-            <div key={r.id} className="nn-card" style={{ background: C.card, borderRadius: 16, padding: 16, marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                <span style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.accent }}>
-                  ☀ INFORME · {r.date}
-                </span>
-                <button onClick={() => deleteReport(r.id)} style={{ background: "none", border: "none",
-                  color: C.inkDim, fontSize: 16, cursor: "pointer" }}>×</button>
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{r.content}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── SEGUIMIENTO ── */}
-      {!loading && tab === "seguimiento" && (
-        <div style={{ padding: 14, position: "relative", zIndex: 1 }}>
-          <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 12, lineHeight: 1.4 }}>
-            Valores que vigilas (sin comprar todavía). Para añadir o actualizar, pega en Informes → bloque 3.
-          </div>
-          {watchlist.length === 0 && (
-            <div style={{ color: C.inkDim, textAlign: "center", padding: 30, fontSize: 13 }}>
-              Sin valores en seguimiento.
-            </div>
-          )}
-          {watchlist.map((w, idx) => {
-            const upside = w.current_price ? ((w.target - w.current_price) / w.current_price) * 100 : 0;
-            const m = RATING_META[w.rating] || RATING_META.hold;
+          {reports.map((r) => {
+            // Extraer un titular: primera línea no vacía
+            const lines = (r.content || "").split("\n").map((l) => l.trim()).filter(Boolean);
+            const headline = lines[0] || "";
+            const preview = lines.slice(1, 4).join(" · ").slice(0, 140);
             return (
-              <div key={w.id} className="nn-card" style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10,
-                borderLeft: `3px solid ${m.color}`, animationDelay: `${idx * 0.05}s` }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-                    <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
-                      {w.symbol.slice(0, 2)}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15 }}>{w.symbol}</div>
-                      <div style={{ fontSize: 11, color: C.inkDim }}>{w.sector || "—"}</div>
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right", marginRight: 8 }}>
-                    <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${w.current_price}</div>
-                    <div style={{ color: upside >= 0 ? C.buy : C.sell, fontSize: 11, fontWeight: 600 }}>
-                      obj ${w.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
-                    </div>
-                  </div>
-                  <button onClick={() => deleteWatch(w.id)} style={{ background: "none", border: "none",
-                    color: C.inkDim, fontSize: 18, cursor: "pointer", padding: 0 }}>×</button>
+              <div key={r.id} onClick={() => setExpandedReport(r)} className="nn-card nn-press"
+                style={{ background: C.card, borderRadius: 16, padding: 14, marginBottom: 10, cursor: "pointer" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.accent }}>
+                    ☀ {r.date}
+                  </span>
+                  <button onClick={(e) => { e.stopPropagation(); deleteReport(r.id); }} style={{ background: "none", border: "none",
+                    color: C.inkDim, fontSize: 16, cursor: "pointer" }}>×</button>
                 </div>
-                {(w.note_short || w.note_mid || w.note_long) && (
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}`, display: "flex", flexDirection: "column", gap: 6 }}>
-                    {w.note_short && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>CORTO</b> {w.note_short}</div>}
-                    {w.note_mid && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>MEDIO</b> {w.note_mid}</div>}
-                    {w.note_long && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>LARGO</b> {w.note_long}</div>}
+                <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, marginBottom: 4, lineHeight: 1.3 }}>
+                  {headline}
+                </div>
+                {preview && (
+                  <div style={{ fontSize: 12, color: C.inkDim, lineHeight: 1.4 }}>
+                    {preview}{lines.length > 4 ? "…" : ""}
                   </div>
                 )}
-                {w.analysis && (
-                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.line}`, fontSize: 12, lineHeight: 1.4, color: C.inkDim }}>
-                    {w.analysis}
-                  </div>
-                )}
+                <div style={{ fontSize: 10, color: C.accent, marginTop: 8, fontWeight: 600 }}>Tocar para abrir →</div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Informe en pantalla completa */}
+      {expandedReport && (
+        <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 50, maxWidth: 480,
+          margin: "0 auto", overflowY: "auto" }}>
+          <div style={{ padding: "18px 18px 8px", display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={() => setExpandedReport(null)} className="nn-press" style={{ background: C.panel, border: "none",
+              color: C.ink, fontSize: 20, cursor: "pointer", width: 38, height: 38, borderRadius: 12 }}>‹</button>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>
+              ☀ Informe · {expandedReport.date}
+            </div>
+          </div>
+          <div style={{ padding: "8px 18px 30px" }}>
+            <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{expandedReport.content}</div>
+          </div>
         </div>
       )}
 
