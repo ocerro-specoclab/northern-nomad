@@ -554,3 +554,33 @@ export default function App() {
                     {h.type === "sell" && (
                       <span style={{ color: pl.pnl >= 0 ? C.buy : C.sell, marginLeft: 8 }}>
                         ({pl.pnl >= 0 ? "+" : ""}{Number(pl.pnl).toLocaleString(undefined, { maximumFractionDigits: 2 })})
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ padding: 16, fontSize: 10, color: C.inkDim, textAlign: "center",
+        borderTop: `1px solid ${C.line}`, marginTop: 10 }}>
+        Prototipo MVP · datos manuales · no es asesoramiento financiero
+      </div>
+    </div>
+  );
+}
+
+function inp(flex) {
+  return { flex, minWidth: 0, background: C.panelHi, color: C.ink, border: `1px solid ${C.line}`,
+    borderRadius: 12, padding: "10px", fontSize: 13 };
+}
+function btn(color) {
+  return { flex: 1, background: color, color: "#0b0f0c", border: "none", borderRadius: 100,
+    padding: "13px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT_DISPLAY, letterSpacing: 0.3 };
+}
+function btnGhost() {
+  return { background: C.panel, color: C.ink, border: "none", borderRadius: 100,
+    padding: "13px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer" };
+}
