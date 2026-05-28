@@ -33,6 +33,56 @@ const RATING_META = {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+// Mini-gráfica de evolución del valor de cartera (SVG nativo, sin librerías)
+function Sparkline({ data, color = "#c4f042" }) {
+  if (!data || data.length < 2) {
+    return (
+      <div style={{ fontSize: 11, color: "#8a948a", padding: "10px 0", textAlign: "center" }}>
+        Aún sin histórico suficiente. Actualiza la cartera varios días para ver la evolución.
+      </div>
+    );
+  }
+  const W = 320, H = 60, PAD = 4;
+  const values = data.map((d) => d.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const stepX = (W - PAD * 2) / Math.max(1, data.length - 1);
+  const pts = data.map((d, i) => {
+    const x = PAD + i * stepX;
+    const y = PAD + (H - PAD * 2) * (1 - (d.value - min) / range);
+    return [x, y];
+  });
+  const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)},${H - PAD} L${pts[0][0].toFixed(1)},${H - PAD} Z`;
+  const last = data[data.length - 1].value;
+  const first = data[0].value;
+  const delta = last - first;
+  const pct = first > 0 ? (delta / first) * 100 : 0;
+  return (
+    <div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+        <defs>
+          <linearGradient id="sparkfill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path d={area} fill="url(#sparkfill)" />
+        <path d={line} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="3" fill={color} />
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#8a948a", marginTop: 4 }}>
+        <span>{data[0].date}</span>
+        <span style={{ color: delta >= 0 ? color : "#ff6b6b", fontWeight: 600 }}>
+          {delta >= 0 ? "+" : ""}{pct.toFixed(1)}% ({data.length} snapshots)
+        </span>
+        <span>{data[data.length - 1].date}</span>
+      </div>
+    </div>
+  );
+}
+
 function RatingTag({ rating }) {
   const m = RATING_META[rating] || RATING_META.hold;
   return (
@@ -395,6 +445,39 @@ export default function App() {
   const totalPnl = totalValue - totalCost;
   const concentrationWarning = positions.length > 0 && positions.length <= 5;
 
+  // Ganancia realizada: suma de PnL de todas las ventas registradas en history
+  // Para cada venta: (precio_venta - precio_compra) * cantidad
+  const realizedPnl = history
+    .filter((h) => h.type === "sell" && h.payload)
+    .reduce((sum, h) => {
+      const p = h.payload;
+      const qty = parseFloat(p.quantity) || 0;
+      const sellPrice = parseFloat(p.sell_price ?? p.price) || 0;
+      const buyPrice = parseFloat(p.avg_price ?? p.buy_price) || 0;
+      return sum + (sellPrice - buyPrice) * qty;
+    }, 0);
+
+  // Serie temporal del valor de cartera: una entrada por snapshot
+  // El snapshot guarda { consensus: [{symbol, broker, rating, price, target}, ...] }
+  // No guarda cantidades, así que el "valor del momento" se aproxima usando
+  // las cantidades ACTUALES de cartera, lo cual es razonable para una curva
+  // de evolución de precios. Para ser exactos en el futuro habría que guardar
+  // también cantidades en el snapshot.
+  const qtyByKey = {};
+  positions.forEach((p) => { qtyByKey[posKey(p)] = p.quantity; });
+  const valueSeries = history
+    .filter((h) => h.type === "snapshot" && h.payload && Array.isArray(h.payload.consensus))
+    .map((h) => {
+      const total = h.payload.consensus.reduce((s, c) => {
+        const key = `${(c.symbol || "").toUpperCase()}@${(c.broker || "").toLowerCase()}`;
+        const qty = qtyByKey[key] || 0;
+        return s + (parseFloat(c.price) || 0) * qty;
+      }, 0);
+      return { date: h.date, ts: h.ts, value: total };
+    })
+    .filter((p) => p.value > 0)
+    .sort((a, b) => a.ts - b.ts);
+
   return (
     <div style={{ fontFamily: FONT_BODY, background: C.bg, color: C.ink,
       minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
@@ -584,6 +667,32 @@ export default function App() {
               borderRadius: 100, padding: "4px 10px", fontSize: 13, fontWeight: 700 }}>
               {totalPnl >= 0 ? "▲" : "▼"} ${Math.abs(totalPnl).toLocaleString(undefined, { maximumFractionDigits: 2 })}
               {totalCost > 0 && <span style={{ opacity: 0.8 }}>({((totalPnl / totalCost) * 100).toFixed(1)}%)</span>}
+            </div>
+
+            {/* Gráfica de evolución */}
+            <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px solid ${C.line}` }}>
+              <div style={{ fontSize: 11, color: C.inkDim, fontWeight: 500, marginBottom: 6 }}>Evolución de la cartera</div>
+              <Sparkline data={valueSeries} color={C.accent} />
+            </div>
+
+            {/* Resumen abierto / realizado */}
+            <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.line}`,
+              display: "flex", gap: 14 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 10, color: C.inkDim, fontWeight: 500, letterSpacing: 0.3 }}>EN ABIERTO</div>
+                <div style={{ fontFamily: FONT_NUM, fontSize: 16, fontWeight: 700, color: totalPnl >= 0 ? C.buy : C.sell, marginTop: 2 }}>
+                  {totalPnl >= 0 ? "+" : ""}${totalPnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+                <div style={{ fontSize: 10, color: C.inkDim, marginTop: 1 }}>papel, aún no vendido</div>
+              </div>
+              <div style={{ width: 1, background: C.line }} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 10, color: C.inkDim, fontWeight: 500, letterSpacing: 0.3 }}>REALIZADO</div>
+                <div style={{ fontFamily: FONT_NUM, fontSize: 16, fontWeight: 700, color: realizedPnl >= 0 ? C.buy : C.sell, marginTop: 2 }}>
+                  {realizedPnl >= 0 ? "+" : ""}${realizedPnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                </div>
+                <div style={{ fontSize: 10, color: C.inkDim, marginTop: 1 }}>ya embolsado en ventas</div>
+              </div>
             </div>
           </div>
           {concentrationWarning && (
