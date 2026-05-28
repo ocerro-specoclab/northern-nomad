@@ -56,6 +56,12 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState(null); // valor abierto en detalle
   const [activeSector, setActiveSector] = useState(null);
+  const [reports, setReports] = useState([]);
+  const [watchlist, setWatchlist] = useState([]);
+  const [reportText, setReportText] = useState("");
+  const [cartUpdateText, setCartUpdateText] = useState("");
+  const [watchUpdateText, setWatchUpdateText] = useState("");
+  const [reportMsg, setReportMsg] = useState("");
 
   // ── Función de carga reutilizable (inicial y botón Actualizar) ─────────────
   async function loadData() {
@@ -66,6 +72,15 @@ export default function App() {
     if (e1 || e2) throw e1 || e2;
     setPositions(pos || []);
     setHistory(hist || []);
+    // reports y watchlist se cargan aparte y no rompen si no existen las tablas todavía
+    try {
+      const { data: rep } = await supabase.from("reports").select("*").eq("owner", OWNER).order("ts", { ascending: false });
+      setReports(rep || []);
+    } catch (e) { /* tabla no creada aún, ignorar */ }
+    try {
+      const { data: wl } = await supabase.from("watchlist").select("*").eq("owner", OWNER);
+      setWatchlist(wl || []);
+    } catch (e) { /* idem */ }
     return pos || [];
   }
 
@@ -234,6 +249,147 @@ export default function App() {
     setPasteText("");
   }
 
+  // ── Parsear líneas de cartera/seguimiento del informe ─────────────────────
+  // Mismo formato que el Pegado Rápido. Devuelve filas listas.
+  function parseLines(text) {
+    const validRatings = Object.keys(RATING_META);
+    const lines = (text || "").split("\n").map((l) => l.trim()).filter(Boolean);
+    return lines.map((line) => {
+      const blocks = line.split("|").map((b) => b.trim());
+      const parts = blocks[0].split(/[,;\t]+/).map((p) => p.trim());
+      if (parts.length < 2 || !parts[0]) return null;
+      let rating = (parts[7] || "hold").toLowerCase().replace(/\s+/g, "_");
+      if (!validRatings.includes(rating)) rating = "hold";
+      return {
+        symbol: parts[0].toUpperCase(),
+        broker: parts[1] || "",
+        sector: parts[2] || "",
+        quantity: parts[3] || "",
+        avg_price: parts[4] || "",
+        current_price: parts[5] || "",
+        target: parts[6] || "",
+        rating,
+        note_short: blocks[1] || "",
+        note_mid: blocks[2] || "",
+        note_long: blocks[3] || "",
+        analysis: blocks[4] || "",
+      };
+    }).filter(Boolean);
+  }
+
+  // ── Guardar informe completo: informe + cartera + seguimiento ─────────────
+  async function saveFullReport() {
+    if (!reportText.trim() && !cartUpdateText.trim() && !watchUpdateText.trim()) {
+      setReportMsg("Pega al menos uno de los tres bloques antes de guardar.");
+      return;
+    }
+    setReportMsg("");
+    const ts = Date.now();
+    const date = todayISO();
+    const summary = [];
+
+    try {
+      // 1. Guardar informe en prosa
+      if (reportText.trim()) {
+        await supabase.from("reports").insert([{ owner: OWNER, ts, date, content: reportText.trim() }]);
+        summary.push("informe guardado");
+      }
+
+      // 2. Actualizar cartera (mismo flujo que processCapture)
+      if (cartUpdateText.trim()) {
+        const rows = parseLines(cartUpdateText);
+        if (rows.length) {
+          const prevByKey = {};
+          positions.forEach((p) => { prevByKey[posKey(p)] = p; });
+          const clean = rows.map((r) => {
+            const base = {
+              owner: OWNER,
+              symbol: r.symbol,
+              broker: r.broker,
+              quantity: parseFloat(r.quantity) || 0,
+              avg_price: parseFloat(r.avg_price) || 0,
+              current_price: parseFloat(r.current_price) || 0,
+              rating: r.rating,
+              target: parseFloat(r.target) || 0,
+            };
+            const prev = prevByKey[posKey(base)] || {};
+            return {
+              ...base,
+              sector: r.sector || prev.sector || "",
+              note_short: r.note_short || prev.note_short || "",
+              note_mid: r.note_mid || prev.note_mid || "",
+              note_long: r.note_long || prev.note_long || "",
+              analysis: r.analysis || prev.analysis || "",
+              analysis_date: r.analysis ? date : (prev.analysis_date || ""),
+            };
+          });
+          const snapshot = {
+            owner: OWNER, ts: ts + 1, date, type: "snapshot",
+            payload: { consensus: clean.map((p) => ({
+              symbol: p.symbol, broker: p.broker, rating: p.rating, price: p.current_price, target: p.target })) },
+          };
+          await supabase.from("positions").delete().eq("owner", OWNER);
+          if (clean.length) await supabase.from("positions").insert(clean);
+          await supabase.from("history").insert([snapshot]);
+          summary.push(`cartera (${clean.length})`);
+        }
+      }
+
+      // 3. Actualizar seguimiento (watchlist) - sin cantidad/coste, solo info
+      if (watchUpdateText.trim()) {
+        const rows = parseLines(watchUpdateText);
+        if (rows.length) {
+          const prevBySymbol = {};
+          watchlist.forEach((w) => { prevBySymbol[w.symbol] = w; });
+          const clean = rows.map((r) => {
+            const prev = prevBySymbol[r.symbol] || {};
+            return {
+              owner: OWNER,
+              symbol: r.symbol,
+              sector: r.sector || prev.sector || "",
+              current_price: parseFloat(r.current_price) || 0,
+              target: parseFloat(r.target) || 0,
+              rating: r.rating,
+              note_short: r.note_short || prev.note_short || "",
+              note_mid: r.note_mid || prev.note_mid || "",
+              note_long: r.note_long || prev.note_long || "",
+              analysis: r.analysis || prev.analysis || "",
+              analysis_date: r.analysis ? date : (prev.analysis_date || ""),
+              added_date: prev.added_date || date,
+            };
+          });
+          // upsert manual: borra los símbolos que vienen y los inserta
+          const symbols = clean.map((c) => c.symbol);
+          if (symbols.length) {
+            await supabase.from("watchlist").delete().eq("owner", OWNER).in("symbol", symbols);
+          }
+          await supabase.from("watchlist").insert(clean);
+          summary.push(`seguimiento (${clean.length})`);
+        }
+      }
+
+      await loadData();
+      setReportMsg(`✓ Guardado: ${summary.join(", ")}.`);
+      setReportText(""); setCartUpdateText(""); setWatchUpdateText("");
+    } catch (err) {
+      setReportMsg("Error al guardar: " + err.message);
+    }
+  }
+
+  async function deleteReport(id) {
+    try {
+      await supabase.from("reports").delete().eq("id", id);
+      setReports((r) => r.filter((x) => x.id !== id));
+    } catch (err) { setError("Error al borrar: " + err.message); }
+  }
+
+  async function deleteWatch(id) {
+    try {
+      await supabase.from("watchlist").delete().eq("id", id);
+      setWatchlist((w) => w.filter((x) => x.id !== id));
+    } catch (err) { setError("Error al borrar: " + err.message); }
+  }
+
   const totalValue = positions.reduce((s, p) => s + p.current_price * p.quantity, 0);
   const totalCost = positions.reduce((s, p) => s + p.avg_price * p.quantity, 0);
   const totalPnl = totalValue - totalCost;
@@ -372,10 +528,11 @@ export default function App() {
         <div style={{ fontSize: 12, color: C.inkDim, marginTop: 4 }}>Cartera personal · sincronizada</div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, padding: "0 18px 8px", position: "relative", zIndex: 1 }}>
-        {["cartera", "captura", "historico"].map((t) => (
+      <div style={{ display: "flex", gap: 6, padding: "0 18px 8px", position: "relative", zIndex: 1,
+        overflowX: "auto" }}>
+        {["cartera", "seguimiento", "captura", "informes", "historico"].map((t) => (
           <button key={t} onClick={() => setTab(t)} className="nn-press" style={{
-            flex: 1, padding: "10px 0", borderRadius: 100,
+            flexShrink: 0, padding: "10px 16px", borderRadius: 100,
             background: tab === t ? C.accent : C.panel, border: "none",
             color: tab === t ? "#0b0f0c" : C.inkDim, fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700,
             letterSpacing: 0.3, cursor: "pointer", textTransform: "capitalize",
@@ -590,6 +747,118 @@ export default function App() {
                         ({pl.pnl >= 0 ? "+" : ""}{Number(pl.pnl).toLocaleString(undefined, { maximumFractionDigits: 2 })})
                       </span>
                     )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── INFORMES ── */}
+      {!loading && tab === "informes" && (
+        <div style={{ padding: 14, position: "relative", zIndex: 1 }}>
+          <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 14,
+            border: `1px solid ${C.accent}33` }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.accent, marginBottom: 8 }}>
+              ✦ NUEVO INFORME DIARIO
+            </div>
+            <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 10, lineHeight: 1.4 }}>
+              Pide a Claude el informe diario y pega las tres partes. Lo que dejes vacío no se toca.
+            </div>
+
+            <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 4, fontWeight: 600 }}>1. Informe en prosa</div>
+            <textarea value={reportText} onChange={(e) => setReportText(e.target.value)}
+              placeholder="Pega aquí el informe narrativo del día..."
+              rows={5} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
+                borderRadius: 10, padding: 10, fontSize: 12, fontFamily: FONT_BODY, resize: "vertical", marginBottom: 10 }} />
+
+            <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 4, fontWeight: 600 }}>2. Actualizar cartera (opcional)</div>
+            <textarea value={cartUpdateText} onChange={(e) => setCartUpdateText(e.target.value)}
+              placeholder="QBTS, eToro, Cuántica, 401.16, 26.80, 29.77, 35, strong_buy | ..."
+              rows={3} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
+                borderRadius: 10, padding: 10, fontSize: 11, fontFamily: FONT_DISPLAY, resize: "vertical", marginBottom: 10 }} />
+
+            <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 4, fontWeight: 600 }}>3. Añadir / actualizar seguimiento (opcional)</div>
+            <textarea value={watchUpdateText} onChange={(e) => setWatchUpdateText(e.target.value)}
+              placeholder="NVDA, , Semiconductores, , , 145, 180, buy | ..."
+              rows={3} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
+                borderRadius: 10, padding: 10, fontSize: 11, fontFamily: FONT_DISPLAY, resize: "vertical", marginBottom: 10 }} />
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button onClick={saveFullReport} style={btn(C.accent)}>Guardar todo</button>
+              {reportMsg && <span style={{ fontSize: 12, color: reportMsg.startsWith("✓") ? C.buy : C.sell, flex: 2 }}>{reportMsg}</span>}
+            </div>
+          </div>
+
+          {reports.length === 0 && (
+            <div style={{ color: C.inkDim, textAlign: "center", padding: 30, fontSize: 13 }}>
+              Sin informes guardados todavía.
+            </div>
+          )}
+          {reports.map((r) => (
+            <div key={r.id} className="nn-card" style={{ background: C.card, borderRadius: 16, padding: 16, marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.accent }}>
+                  ☀ INFORME · {r.date}
+                </span>
+                <button onClick={() => deleteReport(r.id)} style={{ background: "none", border: "none",
+                  color: C.inkDim, fontSize: 16, cursor: "pointer" }}>×</button>
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{r.content}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── SEGUIMIENTO ── */}
+      {!loading && tab === "seguimiento" && (
+        <div style={{ padding: 14, position: "relative", zIndex: 1 }}>
+          <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 12, lineHeight: 1.4 }}>
+            Valores que vigilas (sin comprar todavía). Para añadir o actualizar, pega en Informes → bloque 3.
+          </div>
+          {watchlist.length === 0 && (
+            <div style={{ color: C.inkDim, textAlign: "center", padding: 30, fontSize: 13 }}>
+              Sin valores en seguimiento.
+            </div>
+          )}
+          {watchlist.map((w, idx) => {
+            const upside = w.current_price ? ((w.target - w.current_price) / w.current_price) * 100 : 0;
+            const m = RATING_META[w.rating] || RATING_META.hold;
+            return (
+              <div key={w.id} className="nn-card" style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10,
+                borderLeft: `3px solid ${m.color}`, animationDelay: `${idx * 0.05}s` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
+                    <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
+                      {w.symbol.slice(0, 2)}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15 }}>{w.symbol}</div>
+                      <div style={{ fontSize: 11, color: C.inkDim }}>{w.sector || "—"}</div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", marginRight: 8 }}>
+                    <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${w.current_price}</div>
+                    <div style={{ color: upside >= 0 ? C.buy : C.sell, fontSize: 11, fontWeight: 600 }}>
+                      obj ${w.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
+                    </div>
+                  </div>
+                  <button onClick={() => deleteWatch(w.id)} style={{ background: "none", border: "none",
+                    color: C.inkDim, fontSize: 18, cursor: "pointer", padding: 0 }}>×</button>
+                </div>
+                {(w.note_short || w.note_mid || w.note_long) && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}`, display: "flex", flexDirection: "column", gap: 6 }}>
+                    {w.note_short && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>CORTO</b> {w.note_short}</div>}
+                    {w.note_mid && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>MEDIO</b> {w.note_mid}</div>}
+                    {w.note_long && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>LARGO</b> {w.note_long}</div>}
+                  </div>
+                )}
+                {w.analysis && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.line}`, fontSize: 12, lineHeight: 1.4, color: C.inkDim }}>
+                    {w.analysis}
                   </div>
                 )}
               </div>
