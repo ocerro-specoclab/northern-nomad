@@ -93,14 +93,18 @@ export default function App() {
   }, []);
 
   function blankRow() {
-    return { symbol: "", quantity: "", avg_price: "", current_price: "", rating: "hold", target: "" };
+    return { symbol: "", broker: "", quantity: "", avg_price: "", current_price: "", rating: "hold", target: "" };
   }
+
+  // clave única de una posición: símbolo + broker
+  function posKey(p) { return `${(p.symbol || "").toUpperCase()}@${(p.broker || "").toLowerCase()}`; }
 
   // ── Guardar captura: reemplaza posiciones + añade snapshot/compras ─────────
   async function processCapture() {
     const clean = draft.filter((r) => String(r.symbol).trim()).map((r) => ({
       owner: OWNER,
       symbol: String(r.symbol).trim().toUpperCase(),
+      broker: (r.broker || "").trim(),
       quantity: parseFloat(r.quantity) || 0,
       avg_price: parseFloat(r.avg_price) || 0,
       current_price: parseFloat(r.current_price) || 0,
@@ -113,9 +117,9 @@ export default function App() {
       analysis_date: r.analysis_date || todayISO(),
     }));
 
-    const prevSymbols = new Set(positions.map((p) => p.symbol));
-    const newSymbols = new Set(clean.map((p) => p.symbol));
-    const disappeared = positions.filter((p) => !newSymbols.has(p.symbol));
+    const prevKeys = new Set(positions.map(posKey));
+    const newKeys = new Set(clean.map(posKey));
+    const disappeared = positions.filter((p) => !newKeys.has(posKey(p)));
 
     if (disappeared.length) {
       setPendingSales(disappeared.map((p) => ({
@@ -127,11 +131,11 @@ export default function App() {
     const snapshot = {
       owner: OWNER, ts, date: todayISO(), type: "snapshot",
       payload: { consensus: clean.map((p) => ({
-        symbol: p.symbol, rating: p.rating, price: p.current_price, target: p.target })) },
+        symbol: p.symbol, broker: p.broker, rating: p.rating, price: p.current_price, target: p.target })) },
     };
-    const buyEvents = clean.filter((p) => !prevSymbols.has(p.symbol)).map((p, i) => ({
+    const buyEvents = clean.filter((p) => !prevKeys.has(posKey(p))).map((p, i) => ({
       owner: OWNER, ts: ts + i + 1, date: todayISO(), type: "buy",
-      payload: { symbol: p.symbol, quantity: p.quantity, price: p.avg_price },
+      payload: { symbol: p.symbol, broker: p.broker, quantity: p.quantity, price: p.avg_price },
     }));
 
     try {
@@ -157,7 +161,7 @@ export default function App() {
     const ev = {
       owner: OWNER, ts: Date.now(), date: todayISO(), type: "sell",
       payload: {
-        symbol: s.symbol, quantity: s.quantity, price: s.sell_price,
+        symbol: s.symbol, broker: s.broker || "", quantity: s.quantity, price: s.sell_price,
         buy_price: s.avg_price, pnl: (s.sell_price - s.avg_price) * s.quantity,
       },
     };
@@ -176,8 +180,8 @@ export default function App() {
 
   // ── Rellenar filas desde texto pegado ──────────────────────────────────────
   // Formato por línea (los bloques tras | son opcionales):
-  //   SIMBOLO, cantidad, compra, actual, objetivo, rating | corto | medio | largo | analisis
-  // Ej: RGTI, 580, 23.91, 26.58, 30, strong_buy | Volátil | Sólido | Líder | Consenso Strong Buy...
+  //   SIMBOLO, broker, cantidad, compra, actual, objetivo, rating | corto | medio | largo | analisis
+  // Ej: RGTI, eToro, 441.86, 23.04, 26.58, 30, strong_buy | Volátil | Sólido | Líder | ...
   function fillFromPaste() {
     const validRatings = Object.keys(RATING_META);
     const lines = pasteText.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -188,14 +192,15 @@ export default function App() {
       const blocks = line.split("|").map((b) => b.trim());
       const parts = blocks[0].split(/[,;\t]+/).map((p) => p.trim());
       if (parts.length < 2 || !parts[0]) { errors++; continue; }
-      let rating = (parts[5] || "hold").toLowerCase().replace(/\s+/g, "_");
+      let rating = (parts[6] || "hold").toLowerCase().replace(/\s+/g, "_");
       if (!validRatings.includes(rating)) rating = "hold";
       rows.push({
         symbol: parts[0].toUpperCase(),
-        quantity: parts[1] || "",
-        avg_price: parts[2] || "",
-        current_price: parts[3] || "",
-        target: parts[4] || "",
+        broker: parts[1] || "",
+        quantity: parts[2] || "",
+        avg_price: parts[3] || "",
+        current_price: parts[4] || "",
+        target: parts[5] || "",
         rating,
         note_short: blocks[1] || "",
         note_mid: blocks[2] || "",
@@ -242,7 +247,10 @@ export default function App() {
               display: "flex", alignItems: "center", gap: 12 }}>
               <button onClick={() => setSelected(null)} style={{ background: "none", border: "none",
                 color: C.accent, fontSize: 22, cursor: "pointer", padding: 0 }}>‹</button>
-              <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 20 }}>{p.symbol}</div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 20 }}>
+                {p.symbol}{p.broker ? <span style={{ fontFamily: FONT_BODY, fontSize: 12, fontWeight: 600,
+                  color: C.accent, marginLeft: 8 }}>· {p.broker}</span> : null}
+              </div>
               <div style={{ marginLeft: "auto" }}><RatingTag rating={p.rating} /></div>
             </div>
 
@@ -350,8 +358,8 @@ export default function App() {
             ⚠ VALORES DESAPARECIDOS — ¿LOS VENDISTE?
           </div>
           {pendingSales.map((s, i) => (
-            <div key={s.symbol} style={{ marginBottom: 10 }}>
-              <div style={{ fontWeight: 800 }}>{s.symbol} · {s.quantity} uds</div>
+            <div key={posKey(s)} style={{ marginBottom: 10 }}>
+              <div style={{ fontWeight: 800 }}>{s.symbol} {s.broker ? <span style={{ color: C.inkDim, fontWeight: 400 }}>· {s.broker}</span> : null} · {s.quantity} uds</div>
               <div style={{ fontSize: 12, color: C.inkDim, margin: "4px 0" }}>
                 Precio de venta:
                 <input type="number" value={s.sell_price}
@@ -396,11 +404,16 @@ export default function App() {
             const pnl = (p.current_price - p.avg_price) * p.quantity;
             const atTarget = p.target > 0 && p.current_price >= p.target * 0.98;
             return (
-              <div key={p.symbol} onClick={() => setSelected(p)} style={{ background: C.panel, borderRadius: 10, padding: 14,
+              <div key={posKey(p)} onClick={() => setSelected(p)} style={{ background: C.panel, borderRadius: 10, padding: 14,
                 marginBottom: 8, border: `1px solid ${C.line}`, cursor: "pointer" }}>
                 <div style={{ display: "flex", justifyContent: "space-between" }}>
                   <div>
-                    <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>{p.symbol} <span style={{ color: C.inkDim, fontSize: 12 }}>›</span></div>
+                    <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>
+                      {p.symbol} <span style={{ color: C.inkDim, fontSize: 12 }}>›</span>
+                      {p.broker ? <span style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 600,
+                        color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 4,
+                        padding: "1px 6px", marginLeft: 8 }}>{p.broker}</span> : null}
+                    </div>
                     <div style={{ fontSize: 12, color: C.inkDim }}>{p.quantity} uds · coste ${p.avg_price}</div>
                   </div>
                   <div style={{ textAlign: "right" }}>
@@ -437,10 +450,10 @@ export default function App() {
             </div>
             <div style={{ fontSize: 12, color: C.inkDim, marginBottom: 8 }}>
               Pega aquí el texto que te da Claude. Una línea por valor. El análisis y los plazos son opcionales:
-              <br/><code style={{ color: C.ink }}>SÍMBOLO, cant, compra, actual, objetivo, rating | corto | medio | largo | análisis</code>
+              <br/><code style={{ color: C.ink }}>SÍMBOLO, broker, cant, compra, actual, objetivo, rating | corto | medio | largo | análisis</code>
             </div>
             <textarea value={pasteText} onChange={(e) => setPasteText(e.target.value)}
-              placeholder={"RGTI, 580, 23.91, 26.58, 30, strong_buy | Volátil | Sólido | Líder del sector | Consenso Strong Buy de 9 analistas..."}
+              placeholder={"RGTI, eToro, 441.86, 23.04, 26.58, 30, strong_buy | Volátil | Sólido | Líder del sector | Consenso Strong Buy de 9 analistas..."}
               rows={4} style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
                 borderRadius: 6, padding: 8, fontSize: 12, fontFamily: FONT_DISPLAY, resize: "vertical" }} />
             <div style={{ display: "flex", gap: 8, marginTop: 8, alignItems: "center" }}>
@@ -453,7 +466,10 @@ export default function App() {
             <div key={i} style={{ background: C.panel, borderRadius: 10, padding: 12, marginBottom: 8 }}>
               <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                 <input placeholder="Símbolo" value={r.symbol} onChange={(e) => updateDraft(i, "symbol", e.target.value)} style={inp(1.2)} />
+                <input placeholder="Broker" value={r.broker || ""} onChange={(e) => updateDraft(i, "broker", e.target.value)} style={inp(1)} />
                 <input placeholder="Cantidad" type="number" value={r.quantity} onChange={(e) => updateDraft(i, "quantity", e.target.value)} style={inp(1)} />
+              </div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
                 <input placeholder="P. compra" type="number" value={r.avg_price} onChange={(e) => updateDraft(i, "avg_price", e.target.value)} style={inp(1)} />
               </div>
               <div style={{ display: "flex", gap: 6 }}>
@@ -504,7 +520,7 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ marginTop: 6, fontSize: 14 }}>
-                    <b>{pl.symbol}</b> · {pl.quantity} uds @ ${pl.price}
+                    <b>{pl.symbol}</b>{pl.broker ? <span style={{ color: C.inkDim }}> · {pl.broker}</span> : null} · {pl.quantity} uds @ ${pl.price}
                     {h.type === "sell" && (
                       <span style={{ color: pl.pnl >= 0 ? C.buy : C.sell, marginLeft: 8 }}>
                         ({pl.pnl >= 0 ? "+" : ""}{Number(pl.pnl).toLocaleString(undefined, { maximumFractionDigits: 2 })})
@@ -522,19 +538,3 @@ export default function App() {
         borderTop: `1px solid ${C.line}`, marginTop: 10 }}>
         Prototipo MVP · datos manuales · no es asesoramiento financiero
       </div>
-    </div>
-  );
-}
-
-function inp(flex) {
-  return { flex, minWidth: 0, background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
-    borderRadius: 6, padding: "8px", fontSize: 13 };
-}
-function btn(color) {
-  return { flex: 1, background: color, color: "#06121a", border: "none", borderRadius: 8,
-    padding: "11px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT_DISPLAY, letterSpacing: 1 };
-}
-function btnGhost() {
-  return { background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: 8,
-    padding: "11px 16px", fontSize: 13, cursor: "pointer" };
-}
