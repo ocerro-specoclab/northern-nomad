@@ -12,13 +12,15 @@ import { supabase, OWNER } from "./supabase.js";
 //  • NO vigila el mercado solo entre sesiones · NO es asesoramiento financiero.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FONT_DISPLAY = "'Space Mono', ui-monospace, monospace";
-const FONT_BODY = "'Public Sans', -apple-system, system-ui, sans-serif";
+const FONT_DISPLAY = "'Sora', -apple-system, system-ui, sans-serif";
+const FONT_BODY = "'Sora', -apple-system, system-ui, sans-serif";
+const FONT_NUM = "'Space Grotesk', ui-monospace, monospace";
 
 const C = {
-  bg: "#0a0e14", panel: "#121822", panelHi: "#1a2230", ink: "#e8edf4",
-  inkDim: "#8b97a8", line: "#243043", buy: "#3fd18a", hold: "#e8c14a",
-  sell: "#f06464", accent: "#5ad1ff",
+  bg: "#0b0f0c", panel: "#161c17", panelHi: "#1c241d", ink: "#f2f5f0",
+  inkDim: "#8a948a", line: "#242d25", buy: "#c4f042", hold: "#e8c14a",
+  sell: "#ff6b6b", accent: "#c4f042",
+  card: "#161c17",
 };
 
 const RATING_META = {
@@ -35,8 +37,8 @@ function RatingTag({ rating }) {
   const m = RATING_META[rating] || RATING_META.hold;
   return (
     <span style={{
-      fontFamily: FONT_DISPLAY, fontSize: 10, letterSpacing: 1, color: m.color,
-      border: `1px solid ${m.color}`, borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap",
+      fontFamily: FONT_DISPLAY, fontSize: 10, fontWeight: 700, letterSpacing: 0.5, color: m.color,
+      background: `${m.color}1a`, borderRadius: 100, padding: "3px 9px", whiteSpace: "nowrap",
     }}>{m.label}</span>
   );
 }
@@ -225,12 +227,22 @@ export default function App() {
 
   return (
     <div style={{ fontFamily: FONT_BODY, background: C.bg, color: C.ink,
-      minHeight: "100vh", maxWidth: 480, margin: "0 auto" }}>
+      minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Public+Sans:wght@400;600;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        input, select { font-family: ${FONT_BODY}; }
+        input, select, textarea { font-family: ${FONT_BODY}; }
+        body { background: ${C.bg}; }
+        @keyframes nn-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .nn-card { animation: nn-rise 0.4s ease both; }
+        .nn-press { transition: transform 0.12s ease; }
+        .nn-press:active { transform: scale(0.98); }
       `}</style>
+
+      {/* halo de fondo verde tenue */}
+      <div style={{ position: "fixed", top: -120, left: "50%", transform: "translateX(-50%)",
+        width: 380, height: 380, background: `radial-gradient(circle, ${C.accent}22, transparent 70%)`,
+        pointerEvents: "none", zIndex: 0 }} />
 
       {/* ── DETALLE DE VALOR (overlay) ── */}
       {selected && (() => {
@@ -243,38 +255,49 @@ export default function App() {
         return (
           <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 50, maxWidth: 480,
             margin: "0 auto", overflowY: "auto" }}>
-            <div style={{ padding: "18px 18px 12px", borderBottom: `1px solid ${C.line}`,
-              display: "flex", alignItems: "center", gap: 12 }}>
-              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none",
-                color: C.accent, fontSize: 22, cursor: "pointer", padding: 0 }}>‹</button>
-              <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 20 }}>
-                {p.symbol}{p.broker ? <span style={{ fontFamily: FONT_BODY, fontSize: 12, fontWeight: 600,
-                  color: C.accent, marginLeft: 8 }}>· {p.broker}</span> : null}
-              </div>
+            <div style={{ position: "absolute", top: -120, left: "50%", transform: "translateX(-50%)",
+              width: 380, height: 380, background: `radial-gradient(circle, ${m.color}22, transparent 70%)`,
+              pointerEvents: "none" }} />
+            <div style={{ padding: "18px 18px 8px", display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+              <button onClick={() => setSelected(null)} className="nn-press" style={{ background: C.panel, border: "none",
+                color: C.ink, fontSize: 20, cursor: "pointer", width: 38, height: 38, borderRadius: 12 }}>‹</button>
               <div style={{ marginLeft: "auto" }}><RatingTag rating={p.rating} /></div>
             </div>
 
-            <div style={{ padding: 16 }}>
-              {/* Cifras */}
-              <div style={{ background: C.panel, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <span style={{ color: C.inkDim, fontSize: 13 }}>Precio actual</span>
-                  <span style={{ fontFamily: FONT_DISPLAY, fontWeight: 700 }}>${p.current_price}</span>
+            <div style={{ padding: "8px 18px 24px", position: "relative" }}>
+              {/* Símbolo + precio grande estilo referencia */}
+              <div style={{ textAlign: "center", marginBottom: 20 }}>
+                <div style={{ width: 56, height: 56, borderRadius: 18, background: `${m.color}1a`, margin: "0 auto 12px",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 20, color: m.color }}>
+                  {p.symbol.slice(0, 2)}
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                  <span style={{ color: C.inkDim, fontSize: 13 }}>Objetivo analistas</span>
-                  <span style={{ fontWeight: 700, color: upside >= 0 ? C.buy : C.sell }}>
-                    ${p.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
-                  </span>
+                <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18 }}>
+                  {p.symbol}{p.broker ? <span style={{ fontSize: 13, fontWeight: 500, color: C.inkDim }}> · {p.broker}</span> : null}
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 42, letterSpacing: -1, marginTop: 6 }}>
+                  ${p.current_price}
+                </div>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6,
+                  background: upside >= 0 ? `${C.buy}1a` : `${C.sell}1a`, color: upside >= 0 ? C.buy : C.sell,
+                  borderRadius: 100, padding: "4px 12px", fontSize: 13, fontWeight: 700 }}>
+                  objetivo ${p.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
+                </div>
+              </div>
+
+              {/* Tu posición */}
+              <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
                   <span style={{ color: C.inkDim, fontSize: 13 }}>Tu posición</span>
-                  <span>{p.quantity} uds @ ${p.avg_price}</span>
+                  <span style={{ fontWeight: 600, fontSize: 14 }}>{p.quantity} uds @ ${p.avg_price}</span>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: C.inkDim, fontSize: 13 }}>Tu P&L</span>
-                  <span style={{ color: pnl >= 0 ? C.buy : C.sell, fontWeight: 700 }}>
-                    {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)} ({pnlPct >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%)
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: C.inkDim, fontSize: 13 }}>Valor / Resultado</span>
+                  <span style={{ textAlign: "right" }}>
+                    <span style={{ fontFamily: FONT_NUM, fontWeight: 700 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                    <span style={{ color: pnl >= 0 ? C.buy : C.sell, fontWeight: 700, fontSize: 13, marginLeft: 8 }}>
+                      {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
+                    </span>
                   </span>
                 </div>
               </div>
@@ -282,11 +305,11 @@ export default function App() {
               {/* Plazos */}
               {(p.note_short || p.note_mid || p.note_long) && (
                 <div style={{ marginBottom: 14 }}>
-                  {[["CORTO PLAZO", p.note_short], ["MEDIO PLAZO", p.note_mid], ["LARGO PLAZO", p.note_long]].map(([label, txt]) => txt ? (
-                    <div key={label} style={{ background: C.panel, borderRadius: 10, padding: 12, marginBottom: 8,
+                  {[["Corto plazo", p.note_short], ["Medio plazo", p.note_mid], ["Largo plazo", p.note_long]].map(([label, txt]) => txt ? (
+                    <div key={label} style={{ background: C.card, borderRadius: 16, padding: 14, marginBottom: 8,
                       borderLeft: `3px solid ${C.accent}` }}>
-                      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, letterSpacing: 1, color: C.accent, marginBottom: 4 }}>{label}</div>
-                      <div style={{ fontSize: 14 }}>{txt}</div>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, color: C.accent, marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: 14, lineHeight: 1.4 }}>{txt}</div>
                     </div>
                   ) : null)}
                 </div>
@@ -294,8 +317,8 @@ export default function App() {
 
               {/* Análisis */}
               {p.analysis && (
-                <div style={{ background: C.panel, borderRadius: 10, padding: 14, marginBottom: 14 }}>
-                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, letterSpacing: 1, color: C.inkDim, marginBottom: 6 }}>
+                <div style={{ background: C.card, borderRadius: 16, padding: 16, marginBottom: 14 }}>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.inkDim, marginBottom: 6 }}>
                     ANÁLISIS {p.analysis_date ? `· ${p.analysis_date}` : ""}
                   </div>
                   <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{p.analysis}</div>
@@ -316,15 +339,15 @@ export default function App() {
         );
       })()}
 
-      <div style={{ padding: "18px 18px 12px", borderBottom: `1px solid ${C.line}` }}>
+      <div style={{ padding: "20px 18px 14px", position: "relative", zIndex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18 }}>
-            NORTHERN<span style={{ color: C.accent }}> ✦ </span>NOMAD
+          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 19, letterSpacing: -0.5 }}>
+            Northern<span style={{ color: C.accent }}> ✦ </span>Nomad
           </div>
-          <button onClick={handleRefresh} disabled={refreshing} style={{
-            background: C.panel, color: refreshing ? C.inkDim : C.accent,
-            border: `1px solid ${C.line}`, borderRadius: 8, padding: "7px 12px",
-            fontSize: 12, cursor: refreshing ? "default" : "pointer", fontFamily: FONT_DISPLAY,
+          <button onClick={handleRefresh} disabled={refreshing} className="nn-press" style={{
+            background: refreshing ? C.panel : C.accent, color: refreshing ? C.inkDim : "#0b0f0c",
+            border: "none", borderRadius: 100, padding: "9px 16px",
+            fontSize: 13, fontWeight: 700, cursor: refreshing ? "default" : "pointer", fontFamily: FONT_DISPLAY,
             display: "flex", alignItems: "center", gap: 6,
           }}>
             <span style={{ display: "inline-block", transform: refreshing ? "rotate(360deg)" : "none",
@@ -332,29 +355,29 @@ export default function App() {
             {refreshing ? "..." : "Actualizar"}
           </button>
         </div>
-        <div style={{ fontSize: 11, color: C.inkDim, marginTop: 4 }}>Cartera personal · sincronizada</div>
+        <div style={{ fontSize: 12, color: C.inkDim, marginTop: 4 }}>Cartera personal · sincronizada</div>
       </div>
 
-      <div style={{ display: "flex", borderBottom: `1px solid ${C.line}` }}>
+      <div style={{ display: "flex", gap: 8, padding: "0 18px 8px", position: "relative", zIndex: 1 }}>
         {["cartera", "captura", "historico"].map((t) => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            flex: 1, padding: "12px 0", background: "none", border: "none",
-            borderBottom: tab === t ? `2px solid ${C.accent}` : "2px solid transparent",
-            color: tab === t ? C.ink : C.inkDim, fontFamily: FONT_DISPLAY, fontSize: 12,
-            letterSpacing: 1, cursor: "pointer", textTransform: "uppercase",
+          <button key={t} onClick={() => setTab(t)} className="nn-press" style={{
+            flex: 1, padding: "10px 0", borderRadius: 100,
+            background: tab === t ? C.accent : C.panel, border: "none",
+            color: tab === t ? "#0b0f0c" : C.inkDim, fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700,
+            letterSpacing: 0.3, cursor: "pointer", textTransform: "capitalize",
           }}>{t}</button>
         ))}
       </div>
 
       {error && (
         <div style={{ margin: 14, padding: 12, background: "#1d1110", border: `1px solid ${C.sell}`,
-          borderRadius: 8, fontSize: 13, color: C.sell }}>{error}</div>
+          borderRadius: 12, fontSize: 13, color: C.sell, position: "relative", zIndex: 1 }}>{error}</div>
       )}
       {loading && <div style={{ padding: 40, textAlign: "center", color: C.inkDim }}>Cargando…</div>}
 
       {pendingSales.length > 0 && (
-        <div style={{ margin: 14, padding: 14, background: "#1d1410", border: `1px solid ${C.sell}`, borderRadius: 10 }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 12, color: C.sell, letterSpacing: 1, marginBottom: 8 }}>
+        <div style={{ margin: 14, padding: 16, background: "#1d1410", border: `1px solid ${C.sell}`, borderRadius: 16, position: "relative", zIndex: 1 }}>
+          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, color: C.sell, letterSpacing: 0.5, marginBottom: 8 }}>
             ⚠ VALORES DESAPARECIDOS — ¿LOS VENDISTE?
           </div>
           {pendingSales.map((s, i) => (
@@ -378,56 +401,63 @@ export default function App() {
       )}
 
       {!loading && tab === "cartera" && (
-        <div style={{ padding: 14 }}>
-          <div style={{ background: C.panel, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-            <div style={{ fontSize: 11, color: C.inkDim, letterSpacing: 1 }}>VALOR TOTAL</div>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 30, fontWeight: 700 }}>
+        <div style={{ padding: "6px 14px 14px", position: "relative", zIndex: 1 }}>
+          <div className="nn-card" style={{ background: `linear-gradient(150deg, ${C.panelHi}, ${C.panel})`,
+            borderRadius: 24, padding: 22, marginBottom: 14, border: `1px solid ${C.line}` }}>
+            <div style={{ fontSize: 12, color: C.inkDim, fontWeight: 500 }}>Valor total</div>
+            <div style={{ fontFamily: FONT_NUM, fontSize: 40, fontWeight: 700, letterSpacing: -1, lineHeight: 1.1, marginTop: 4 }}>
               ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
-            <div style={{ color: totalPnl >= 0 ? C.buy : C.sell, fontSize: 14, fontWeight: 600 }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 8,
+              background: totalPnl >= 0 ? `${C.buy}1a` : `${C.sell}1a`, color: totalPnl >= 0 ? C.buy : C.sell,
+              borderRadius: 100, padding: "4px 10px", fontSize: 13, fontWeight: 700 }}>
               {totalPnl >= 0 ? "▲" : "▼"} ${Math.abs(totalPnl).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              {totalCost > 0 && <span style={{ opacity: 0.8 }}>({((totalPnl / totalCost) * 100).toFixed(1)}%)</span>}
             </div>
           </div>
           {concentrationWarning && (
-            <div style={{ background: "#16110a", border: `1px solid ${C.hold}`, borderRadius: 10,
-              padding: 12, marginBottom: 14, fontSize: 13 }}>
+            <div className="nn-card" style={{ background: `${C.hold}12`, borderRadius: 16,
+              padding: 14, marginBottom: 14, fontSize: 13, lineHeight: 1.4 }}>
               <b style={{ color: C.hold }}>Riesgo de concentración.</b> Pocas posiciones, posible exposición a un solo sector. No es asesoramiento financiero.
             </div>
           )}
           {positions.length === 0 && (
             <div style={{ color: C.inkDim, textAlign: "center", padding: 30 }}>
-              Sin posiciones. Ve a “Captura”.
+              Sin posiciones. Ve a "Captura".
             </div>
           )}
-          {positions.map((p) => {
+          {positions.map((p, idx) => {
             const value = p.current_price * p.quantity;
             const pnl = (p.current_price - p.avg_price) * p.quantity;
-            const atTarget = p.target > 0 && p.current_price >= p.target * 0.98;
+            const pnlPct = p.avg_price ? ((p.current_price - p.avg_price) / p.avg_price) * 100 : 0;
+            const m = RATING_META[p.rating] || RATING_META.hold;
             return (
-              <div key={posKey(p)} onClick={() => setSelected(p)} style={{ background: C.panel, borderRadius: 10, padding: 14,
-                marginBottom: 8, border: `1px solid ${C.line}`, cursor: "pointer" }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <div>
-                    <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>
-                      {p.symbol} <span style={{ color: C.inkDim, fontSize: 12 }}>›</span>
-                      {p.broker ? <span style={{ fontFamily: FONT_BODY, fontSize: 10, fontWeight: 600,
-                        color: C.accent, border: `1px solid ${C.accent}`, borderRadius: 4,
-                        padding: "1px 6px", marginLeft: 8 }}>{p.broker}</span> : null}
+              <div key={posKey(p)} onClick={() => setSelected(p)} className="nn-card nn-press"
+                style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10,
+                  cursor: "pointer", animationDelay: `${idx * 0.05}s`,
+                  borderLeft: `3px solid ${m.color}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {/* avatar circular con inicial */}
+                    <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
+                      {p.symbol.slice(0, 2)}
                     </div>
-                    <div style={{ fontSize: 12, color: C.inkDim }}>{p.quantity} uds · coste ${p.avg_price}</div>
+                    <div>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
+                        {p.symbol}
+                        {p.broker ? <span style={{ fontSize: 9, fontWeight: 600, color: C.inkDim,
+                          background: C.panelHi, borderRadius: 100, padding: "2px 7px" }}>{p.broker}</span> : null}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>{p.quantity} uds · ${p.avg_price}</div>
+                    </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontWeight: 700 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                    <div style={{ color: pnl >= 0 ? C.buy : C.sell, fontSize: 12 }}>
-                      {pnl >= 0 ? "+" : ""}{pnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                    <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                    <div style={{ color: pnl >= 0 ? C.buy : C.sell, fontSize: 12, fontWeight: 600 }}>
+                      {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
                     </div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
-                  marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}` }}>
-                  <RatingTag rating={p.rating} />
-                  <div style={{ fontSize: 11, color: C.inkDim }}>
-                    objetivo ${p.target}{atTarget && <span style={{ color: C.hold, marginLeft: 6 }}>● en objetivo</span>}
                   </div>
                 </div>
               </div>
@@ -524,33 +554,3 @@ export default function App() {
                     {h.type === "sell" && (
                       <span style={{ color: pl.pnl >= 0 ? C.buy : C.sell, marginLeft: 8 }}>
                         ({pl.pnl >= 0 ? "+" : ""}{Number(pl.pnl).toLocaleString(undefined, { maximumFractionDigits: 2 })})
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <div style={{ padding: 16, fontSize: 10, color: C.inkDim, textAlign: "center",
-        borderTop: `1px solid ${C.line}`, marginTop: 10 }}>
-        Prototipo MVP · datos manuales · no es asesoramiento financiero
-      </div>
-    </div>
-  );
-}
-
-function inp(flex) {
-  return { flex, minWidth: 0, background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
-    borderRadius: 6, padding: "8px", fontSize: 13 };
-}
-function btn(color) {
-  return { flex: 1, background: color, color: "#06121a", border: "none", borderRadius: 8,
-    padding: "11px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT_DISPLAY, letterSpacing: 1 };
-}
-function btnGhost() {
-  return { background: "none", color: C.ink, border: `1px solid ${C.line}`, borderRadius: 8,
-    padding: "11px 16px", fontSize: 13, cursor: "pointer" };
-}
