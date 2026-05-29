@@ -1,0 +1,18 @@
+{
+  "name": "Northern Nomad",
+  "short_name": "Northern Nomad",
+  "description": "Visor personal de cartera bursátil",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0f0c",
+  "theme_color": "#0b0f0c",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
