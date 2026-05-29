@@ -83,6 +83,103 @@ function Sparkline({ data, color = "#c4f042" }) {
   );
 }
 
+// Gráfica de precios de un valor con objetivo y línea de compra opcionales
+function PriceHistoryChart({ points, target = 0, avgPrice = 0, color = "#c4f042" }) {
+  if (!points || points.length === 0) {
+    return (
+      <div style={{ fontSize: 11, color: "#8a948a", padding: "20px 0", textAlign: "center", lineHeight: 1.5 }}>
+        Sin histórico todavía.<br/>
+        El gráfico se rellenará a medida que actualices el valor en los próximos días.
+      </div>
+    );
+  }
+  const W = 320, H = 140, PADL = 30, PADR = 8, PADT = 14, PADB = 22;
+  const innerW = W - PADL - PADR;
+  const innerH = H - PADT - PADB;
+  // Valores a considerar para la escala Y: precios históricos + target + avgPrice
+  const allValues = points.map((p) => p.price);
+  if (target > 0) allValues.push(target);
+  if (avgPrice > 0) allValues.push(avgPrice);
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const range = (max - min) || 1;
+  const yMin = min - range * 0.08;
+  const yMax = max + range * 0.08;
+  const yRange = yMax - yMin;
+  const x = (i) => PADL + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
+  const y = (v) => PADT + (1 - (v - yMin) / yRange) * innerH;
+  const pts = points.map((p, i) => [x(i), y(p.price)]);
+  const line = pts.map((p, i) => `${i === 0 ? "M" : "L"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const lastPrice = points[points.length - 1].price;
+  const firstPrice = points[0].price;
+  const delta = lastPrice - firstPrice;
+  const pct = firstPrice > 0 ? (delta / firstPrice) * 100 : 0;
+  // Etiquetas de eje Y: min, mid, max
+  const yLabels = [yMax, (yMax + yMin) / 2, yMin];
+  return (
+    <div>
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ display: "block" }}>
+        <defs>
+          <linearGradient id="pricefill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {/* Eje Y: etiquetas y líneas de cuadrícula */}
+        {yLabels.map((v, i) => (
+          <g key={i}>
+            <line x1={PADL} y1={y(v)} x2={W - PADR} y2={y(v)} stroke="#242d25" strokeWidth="1" strokeDasharray="2,3" />
+            <text x={PADL - 4} y={y(v) + 3} fontSize="9" fill="#8a948a" textAnchor="end" fontFamily="'Space Grotesk', monospace">
+              ${v.toFixed(v < 10 ? 2 : 1)}
+            </text>
+          </g>
+        ))}
+        {/* Línea de precio de compra (si aplica) */}
+        {avgPrice > 0 && (
+          <g>
+            <line x1={PADL} y1={y(avgPrice)} x2={W - PADR} y2={y(avgPrice)} stroke="#8a948a" strokeWidth="1" strokeDasharray="4,3" opacity="0.7" />
+            <text x={W - PADR} y={y(avgPrice) - 3} fontSize="9" fill="#8a948a" textAnchor="end" fontFamily="'Space Grotesk', monospace">
+              compra
+            </text>
+          </g>
+        )}
+        {/* Línea de objetivo */}
+        {target > 0 && (
+          <g>
+            <line x1={PADL} y1={y(target)} x2={W - PADR} y2={y(target)} stroke={color} strokeWidth="1.2" strokeDasharray="5,3" opacity="0.85" />
+            <text x={W - PADR} y={y(target) - 3} fontSize="9" fill={color} textAnchor="end" fontWeight="700" fontFamily="'Space Grotesk', monospace">
+              objetivo ${target}
+            </text>
+          </g>
+        )}
+        {/* Área bajo la curva */}
+        {points.length > 1 && (
+          <path d={`${line} L${pts[pts.length - 1][0].toFixed(1)},${PADT + innerH} L${pts[0][0].toFixed(1)},${PADT + innerH} Z`}
+            fill="url(#pricefill)" />
+        )}
+        {/* Línea principal */}
+        {points.length > 1 && <path d={line} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
+        {/* Puntos */}
+        {pts.map((p, i) => (
+          <circle key={i} cx={p[0]} cy={p[1]} r={i === pts.length - 1 ? 3.5 : 2.2} fill={color}
+            stroke={i === pts.length - 1 ? "#0b0f0c" : "none"} strokeWidth="1.5" />
+        ))}
+        {/* Etiqueta primer y último día */}
+        <text x={PADL} y={H - 6} fontSize="9" fill="#8a948a" fontFamily="'Space Grotesk', monospace">{points[0].date}</text>
+        <text x={W - PADR} y={H - 6} fontSize="9" fill="#8a948a" textAnchor="end" fontFamily="'Space Grotesk', monospace">{points[points.length - 1].date}</text>
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#8a948a", marginTop: 4 }}>
+        <span>{points.length} {points.length === 1 ? "captura" : "capturas"}</span>
+        {points.length > 1 && (
+          <span style={{ color: delta >= 0 ? color : "#ff6b6b", fontWeight: 600 }}>
+            {delta >= 0 ? "+" : ""}{pct.toFixed(1)}% desde primer registro
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RatingTag({ rating }) {
   const m = RATING_META[rating] || RATING_META.hold;
   return (
@@ -105,6 +202,7 @@ export default function App() {
   const [pasteMsg, setPasteMsg] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState(null); // valor abierto en detalle
+  const [selectedWatch, setSelectedWatch] = useState(null);
   const [activeSector, setActiveSector] = useState(null);
   const [reports, setReports] = useState([]);
   const [watchlist, setWatchlist] = useState([]);
@@ -113,6 +211,7 @@ export default function App() {
   const [watchUpdateText, setWatchUpdateText] = useState("");
   const [reportMsg, setReportMsg] = useState("");
   const [expandedReport, setExpandedReport] = useState(null);
+  const [shareMsg, setShareMsg] = useState("");
   const [showAddManual, setShowAddManual] = useState(false);
   const [manualRow, setManualRow] = useState(null);
 
@@ -417,6 +516,15 @@ export default function App() {
             await supabase.from("watchlist").delete().eq("owner", OWNER).in("symbol", symbols);
           }
           await supabase.from("watchlist").insert(clean);
+          // Snapshot de seguimiento: para que la gráfica del detalle de cada valor pueda
+          // reconstruir el histórico de precios objetivo y reales
+          const watchSnapshot = {
+            owner: OWNER, ts: ts + 2, date, type: "watch_snapshot",
+            payload: { entries: clean.map((w) => ({
+              symbol: w.symbol, sector: w.sector, rating: w.rating,
+              price: w.current_price, target: w.target })) },
+          };
+          await supabase.from("history").insert([watchSnapshot]);
           summary.push(`seguimiento (${clean.length})`);
         }
       }
@@ -519,6 +627,28 @@ export default function App() {
     .filter((p) => p.value > 0)
     .sort((a, b) => a.ts - b.ts);
 
+  // Extrae el histórico de precios de un símbolo concreto desde history.
+  // kind="cartera" busca en snapshots con consensus[]; kind="seguimiento" en watch_snapshot con entries[]
+  // Para cartera filtra también por broker si está dado, para no mezclar RGTI de eToro con RGTI de Revolut.
+  function priceHistoryFor(symbol, broker, kind) {
+    const SYM = (symbol || "").toUpperCase();
+    const BRK = (broker || "").toLowerCase();
+    const points = [];
+    history.forEach((h) => {
+      if (!h.payload) return;
+      if (kind === "cartera" && h.type === "snapshot" && Array.isArray(h.payload.consensus)) {
+        const c = h.payload.consensus.find((c) => (c.symbol || "").toUpperCase() === SYM &&
+          (BRK ? (c.broker || "").toLowerCase() === BRK : true));
+        if (c && c.price) points.push({ ts: h.ts, date: h.date, price: parseFloat(c.price) });
+      }
+      if (kind === "seguimiento" && h.type === "watch_snapshot" && Array.isArray(h.payload.entries)) {
+        const e = h.payload.entries.find((e) => (e.symbol || "").toUpperCase() === SYM);
+        if (e && e.price) points.push({ ts: h.ts, date: h.date, price: parseFloat(e.price) });
+      }
+    });
+    return points.sort((a, b) => a.ts - b.ts);
+  }
+
   return (
     <div style={{ fontFamily: FONT_BODY, background: C.bg, color: C.ink,
       minHeight: "100vh", maxWidth: 480, margin: "0 auto", position: "relative" }}>
@@ -579,6 +709,19 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Gráfica de precios con histórico */}
+              <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 14 }}>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.inkDim, marginBottom: 8 }}>
+                  EVOLUCIÓN DEL PRECIO
+                </div>
+                <PriceHistoryChart
+                  points={priceHistoryFor(p.symbol, p.broker, "cartera")}
+                  target={p.target}
+                  avgPrice={p.avg_price}
+                  color={m.color}
+                />
+              </div>
+
               {/* Tu posición */}
               <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 14 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
@@ -622,6 +765,85 @@ export default function App() {
               {!p.analysis && !p.note_short && !p.note_mid && !p.note_long && (
                 <div style={{ color: C.inkDim, fontSize: 13, textAlign: "center", padding: 20 }}>
                   Sin análisis todavía. Pídele a Claude el texto actualizado y pégalo en Captura.
+                </div>
+              )}
+
+              <div style={{ fontSize: 10, color: C.inkDim, textAlign: "center" }}>
+                No es asesoramiento financiero.
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── DETALLE DE SEGUIMIENTO (overlay) ── */}
+      {selectedWatch && (() => {
+        const w = selectedWatch;
+        const upside = w.current_price ? ((w.target - w.current_price) / w.current_price) * 100 : 0;
+        const m = RATING_META[w.rating] || RATING_META.hold;
+        return (
+          <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 50, maxWidth: 480,
+            margin: "0 auto", overflowY: "auto" }}>
+            <div style={{ position: "absolute", top: -120, left: "50%", transform: "translateX(-50%)",
+              width: 380, height: 380, background: `radial-gradient(circle, ${m.color}22, transparent 70%)`,
+              pointerEvents: "none" }} />
+            <div style={{ padding: "18px 18px 8px", display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+              <button onClick={() => setSelectedWatch(null)} className="nn-press" style={{ background: C.panel, border: "none",
+                color: C.ink, fontSize: 20, cursor: "pointer", width: 38, height: 38, borderRadius: 12 }}>‹</button>
+              <span style={{ fontSize: 11, color: C.accent, fontWeight: 700, fontFamily: FONT_DISPLAY,
+                background: `${C.accent}1a`, borderRadius: 100, padding: "4px 10px", letterSpacing: 0.3 }}>SEGUIMIENTO</span>
+              <div style={{ marginLeft: "auto" }}><RatingTag rating={w.rating} /></div>
+            </div>
+            <div style={{ padding: "8px 18px 24px", position: "relative" }}>
+              <div style={{ textAlign: "center", marginBottom: 20 }}>
+                <div style={{ width: 56, height: 56, borderRadius: 18, background: `${m.color}1a`, margin: "0 auto 12px",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 20, color: m.color }}>
+                  {w.symbol.slice(0, 2)}
+                </div>
+                <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18 }}>
+                  {w.symbol} <span style={{ fontSize: 13, fontWeight: 500, color: C.inkDim }}>· {w.sector || "—"}</span>
+                </div>
+                <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 42, letterSpacing: -1, marginTop: 6 }}>
+                  ${w.current_price}
+                </div>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6,
+                  background: upside >= 0 ? `${C.buy}1a` : `${C.sell}1a`, color: upside >= 0 ? C.buy : C.sell,
+                  borderRadius: 100, padding: "4px 12px", fontSize: 13, fontWeight: 700 }}>
+                  objetivo ${w.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
+                </div>
+              </div>
+
+              {/* Gráfica de precios histórica */}
+              <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 14 }}>
+                <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.inkDim, marginBottom: 8 }}>
+                  EVOLUCIÓN DEL PRECIO
+                </div>
+                <PriceHistoryChart
+                  points={priceHistoryFor(w.symbol, "", "seguimiento")}
+                  target={w.target}
+                  color={C.accent}
+                />
+              </div>
+
+              {(w.note_short || w.note_mid || w.note_long) && (
+                <div style={{ marginBottom: 14 }}>
+                  {[["Corto plazo", w.note_short], ["Medio plazo", w.note_mid], ["Largo plazo", w.note_long]].map(([label, txt]) => txt ? (
+                    <div key={label} style={{ background: C.card, borderRadius: 16, padding: 14, marginBottom: 8,
+                      borderLeft: `3px solid ${C.accent}` }}>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, color: C.accent, marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: 14, lineHeight: 1.4 }}>{txt}</div>
+                    </div>
+                  ) : null)}
+                </div>
+              )}
+
+              {w.analysis && (
+                <div style={{ background: C.card, borderRadius: 16, padding: 16, marginBottom: 14 }}>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.inkDim, marginBottom: 6 }}>
+                    ANÁLISIS {w.analysis_date ? `· ${w.analysis_date}` : ""}
+                  </div>
+                  <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{w.analysis}</div>
                 </div>
               )}
 
@@ -748,85 +970,82 @@ export default function App() {
             </div>
           )}
           {(() => {
-            // sectores presentes (los que tienen al menos una posición) + tab especial "Seguimiento"
             const sectors = [...new Set(positions.map((p) => (p.sector || "Sin sector")))];
-            const SEGUIMIENTO_KEY = "__watch__";
-            const allTabs = [...sectors, ...(watchlist.length > 0 ? [SEGUIMIENTO_KEY] : [])];
-            const cur = (activeSector && allTabs.includes(activeSector)) ? activeSector : (sectors[0] || SEGUIMIENTO_KEY);
-            const showingWatch = cur === SEGUIMIENTO_KEY;
-            return allTabs.length > 0 ? (
+            if (positions.length === 0 && watchlist.length === 0) return null;
+            return (
               <>
-                {allTabs.length > 1 && (
-                  <div style={{ display: "flex", gap: 8, marginBottom: 12, overflowX: "auto", paddingBottom: 2 }}>
-                    {allTabs.map((s) => {
-                      const isWatch = s === SEGUIMIENTO_KEY;
-                      const active = s === cur;
-                      return (
-                        <button key={s} onClick={() => setActiveSector(s)} className="nn-press" style={{
-                          flexShrink: 0, padding: "8px 14px", borderRadius: 100,
-                          border: isWatch ? `1.5px dashed ${C.accent}` : "none",
-                          background: active ? (isWatch ? "transparent" : C.accent) : (isWatch ? `${C.accent}12` : C.panel),
-                          color: active ? (isWatch ? C.accent : "#0b0f0c") : (isWatch ? C.accent : C.inkDim),
-                          fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                          display: "flex", alignItems: "center", gap: 5,
-                        }}>
-                          {isWatch && <span>◉</span>}
-                          {isWatch ? `Seguimiento · ${watchlist.length}` : s}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {/* Posiciones por sector */}
-                {!showingWatch && positions.filter((p) => (p.sector || "Sin sector") === cur).map((p, idx) => {
-                  const value = p.current_price * p.quantity;
-                  const pnl = (p.current_price - p.avg_price) * p.quantity;
-                  const pnlPct = p.avg_price ? ((p.current_price - p.avg_price) / p.avg_price) * 100 : 0;
-                  const m = RATING_META[p.rating] || RATING_META.hold;
+                {sectors.map((sec) => {
+                  const items = positions.filter((p) => (p.sector || "Sin sector") === sec);
+                  const sectorValue = items.reduce((s, p) => s + p.current_price * p.quantity, 0);
                   return (
-                    <div key={posKey(p)} onClick={() => setSelected(p)} className="nn-card nn-press"
-                      style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10,
-                        cursor: "pointer", animationDelay: `${idx * 0.05}s`,
-                        borderLeft: `3px solid ${m.color}` }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
-                            display: "flex", alignItems: "center", justifyContent: "center",
-                            fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
-                            {p.symbol.slice(0, 2)}
-                          </div>
-                          <div>
-                            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
-                              {p.symbol}
-                              {p.broker ? <span style={{ fontSize: 9, fontWeight: 600, color: C.inkDim,
-                                background: C.panelHi, borderRadius: 100, padding: "2px 7px" }}>{p.broker}</span> : null}
-                            </div>
-                            <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>{p.quantity} uds · ${p.avg_price}</div>
-                          </div>
+                    <div key={sec} style={{ marginBottom: 18 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, padding: "0 2px" }}>
+                        <div style={{ fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, letterSpacing: 0.4, color: C.ink, textTransform: "uppercase" }}>
+                          {sec}
                         </div>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
-                          <div style={{ color: pnl >= 0 ? C.buy : C.sell, fontSize: 12, fontWeight: 600 }}>
-                            {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
-                          </div>
+                        <div style={{ fontSize: 11, color: C.inkDim, fontFamily: FONT_NUM }}>
+                          {items.length} · ${sectorValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
                         </div>
                       </div>
+                      {items.map((p, idx) => {
+                        const value = p.current_price * p.quantity;
+                        const pnl = (p.current_price - p.avg_price) * p.quantity;
+                        const pnlPct = p.avg_price ? ((p.current_price - p.avg_price) / p.avg_price) * 100 : 0;
+                        const m = RATING_META[p.rating] || RATING_META.hold;
+                        return (
+                          <div key={posKey(p)} onClick={() => setSelected(p)} className="nn-card nn-press"
+                            style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10,
+                              cursor: "pointer", animationDelay: `${idx * 0.05}s`,
+                              borderLeft: `3px solid ${m.color}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 14, color: m.color }}>
+                                  {p.symbol.slice(0, 2)}
+                                </div>
+                                <div>
+                                  <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
+                                    {p.symbol}
+                                    {p.broker ? <span style={{ fontSize: 9, fontWeight: 600, color: C.inkDim,
+                                      background: C.panelHi, borderRadius: 100, padding: "2px 7px" }}>{p.broker}</span> : null}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>{p.quantity} uds · ${p.avg_price}</div>
+                                </div>
+                              </div>
+                              <div style={{ textAlign: "right" }}>
+                                <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                                <div style={{ color: pnl >= 0 ? C.buy : C.sell, fontSize: 12, fontWeight: 600 }}>
+                                  {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })}
-                {/* Vista de Seguimiento (cuando la sub-pestaña activa es Seguimiento) */}
-                {showingWatch && (
-                  <>
-                    <div style={{ fontSize: 11, color: C.accent, marginBottom: 10, fontStyle: "italic", lineHeight: 1.4 }}>
-                      Valores en seguimiento — no comprados todavía. Esta pestaña no se incluye en el valor total ni en la gráfica.
+                {watchlist.length > 0 && (
+                  <div style={{ marginTop: 4, marginBottom: 18 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, padding: "0 2px" }}>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, letterSpacing: 0.4, color: C.accent, textTransform: "uppercase",
+                        display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>◉</span> Seguimiento
+                      </div>
+                      <div style={{ fontSize: 11, color: C.inkDim }}>{watchlist.length} {watchlist.length === 1 ? "valor" : "valores"}</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: C.accent, marginBottom: 10, fontStyle: "italic", lineHeight: 1.4, padding: "0 2px" }}>
+                      Valores que vigilas. No cuentan en el valor total ni en la gráfica.
                     </div>
                     {watchlist.map((w, idx) => {
                       const upside = w.current_price ? ((w.target - w.current_price) / w.current_price) * 100 : 0;
                       const m = RATING_META[w.rating] || RATING_META.hold;
                       return (
-                        <div key={w.id} className="nn-card" style={{
+                        <div key={w.id} onClick={() => setSelectedWatch(w)} className="nn-card nn-press" style={{
                           background: "transparent", border: `1.5px dashed ${C.accent}55`,
-                          borderRadius: 18, padding: 16, marginBottom: 10, animationDelay: `${idx * 0.05}s` }}>
+                          borderRadius: 18, padding: 16, marginBottom: 10, animationDelay: `${idx * 0.05}s`,
+                          cursor: "pointer" }}>
                           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
                               <div style={{ width: 38, height: 38, borderRadius: 12, background: `${m.color}1a`,
@@ -845,28 +1064,16 @@ export default function App() {
                                 obj ${w.target} ({upside >= 0 ? "+" : ""}{upside.toFixed(1)}%)
                               </div>
                             </div>
-                            <button onClick={() => deleteWatch(w.id)} style={{ background: "none", border: "none",
+                            <button onClick={(e) => { e.stopPropagation(); deleteWatch(w.id); }} style={{ background: "none", border: "none",
                               color: C.inkDim, fontSize: 18, cursor: "pointer", padding: 0 }}>×</button>
                           </div>
-                          {(w.note_short || w.note_mid || w.note_long) && (
-                            <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.line}`, display: "flex", flexDirection: "column", gap: 6 }}>
-                              {w.note_short && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>CORTO</b> {w.note_short}</div>}
-                              {w.note_mid && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>MEDIO</b> {w.note_mid}</div>}
-                              {w.note_long && <div style={{ fontSize: 12 }}><b style={{ color: C.accent, fontSize: 10 }}>LARGO</b> {w.note_long}</div>}
-                            </div>
-                          )}
-                          {w.analysis && (
-                            <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.line}`, fontSize: 12, lineHeight: 1.4, color: C.inkDim }}>
-                              {w.analysis}
-                            </div>
-                          )}
                         </div>
                       );
                     })}
-                  </>
+                  </div>
                 )}
               </>
-            ) : null;
+            );
           })()}
 
           {/* Botón flotante para añadir un valor a mano */}
@@ -1042,12 +1249,38 @@ export default function App() {
         <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 50, maxWidth: 480,
           margin: "0 auto", overflowY: "auto" }}>
           <div style={{ padding: "18px 18px 8px", display: "flex", alignItems: "center", gap: 12 }}>
-            <button onClick={() => setExpandedReport(null)} className="nn-press" style={{ background: C.panel, border: "none",
+            <button onClick={() => { setExpandedReport(null); setShareMsg(""); }} className="nn-press" style={{ background: C.panel, border: "none",
               color: C.ink, fontSize: 20, cursor: "pointer", width: 38, height: 38, borderRadius: 12 }}>‹</button>
-            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16, flex: 1 }}>
               ☀ Informe · {expandedReport.date}
             </div>
+            {/* Botón compartir nativo (móvil) */}
+            <button onClick={async () => {
+              const text = `Informe Northern Nomad · ${expandedReport.date}\n\n${expandedReport.content}`;
+              try {
+                if (navigator.share) {
+                  await navigator.share({ title: `Informe · ${expandedReport.date}`, text });
+                  setShareMsg("");
+                } else {
+                  await navigator.clipboard.writeText(text);
+                  setShareMsg("✓ Copiado");
+                  setTimeout(() => setShareMsg(""), 2000);
+                }
+              } catch (e) { /* usuario canceló, ignorar */ }
+            }} className="nn-press" title="Compartir" style={{ background: C.panel, border: "none",
+              color: C.accent, fontSize: 16, cursor: "pointer", width: 38, height: 38, borderRadius: 12 }}>⇪</button>
+            {/* Botón copiar al portapapeles */}
+            <button onClick={async () => {
+              const text = `Informe Northern Nomad · ${expandedReport.date}\n\n${expandedReport.content}`;
+              try {
+                await navigator.clipboard.writeText(text);
+                setShareMsg("✓ Copiado");
+                setTimeout(() => setShareMsg(""), 2000);
+              } catch (e) { setShareMsg("Error al copiar"); }
+            }} className="nn-press" title="Copiar al portapapeles" style={{ background: C.panel, border: "none",
+              color: C.ink, fontSize: 14, cursor: "pointer", width: 38, height: 38, borderRadius: 12 }}>⧉</button>
           </div>
+          {shareMsg && <div style={{ padding: "0 18px", fontSize: 12, color: C.buy, textAlign: "right" }}>{shareMsg}</div>}
           <div style={{ padding: "8px 18px 30px" }}>
             <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{expandedReport.content}</div>
           </div>
