@@ -212,6 +212,10 @@ export default function App() {
   const [reportMsg, setReportMsg] = useState("");
   const [expandedReport, setExpandedReport] = useState(null);
   const [shareMsg, setShareMsg] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
+  const [privacy, setPrivacy] = useState(false);
+  // formateador de importes que respeta el modo privacidad
+  const fmt$ = (v, opts = {}) => privacy ? "•••" : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: opts.min ?? 0, maximumFractionDigits: opts.max ?? 2 })}`;
   const [showAddManual, setShowAddManual] = useState(false);
   const [manualRow, setManualRow] = useState(null);
 
@@ -614,39 +618,49 @@ export default function App() {
   // también cantidades en el snapshot.
   const qtyByKey = {};
   positions.forEach((p) => { qtyByKey[posKey(p)] = p.quantity; });
-  const valueSeries = history
+  // Serie del valor total de cartera, un punto por día (el último snapshot de ese día)
+  const valueSeriesByDate = {};
+  history
     .filter((h) => h.type === "snapshot" && h.payload && Array.isArray(h.payload.consensus))
-    .map((h) => {
+    .forEach((h) => {
       const total = h.payload.consensus.reduce((s, c) => {
         const key = `${(c.symbol || "").toUpperCase()}@${(c.broker || "").toLowerCase()}`;
         const qty = qtyByKey[key] || 0;
         return s + (parseFloat(c.price) || 0) * qty;
       }, 0);
-      return { date: h.date, ts: h.ts, value: total };
-    })
-    .filter((p) => p.value > 0)
-    .sort((a, b) => a.ts - b.ts);
+      if (total <= 0) return;
+      // Nos quedamos con el snapshot más reciente (mayor ts) por fecha
+      if (!valueSeriesByDate[h.date] || valueSeriesByDate[h.date].ts < h.ts) {
+        valueSeriesByDate[h.date] = { date: h.date, ts: h.ts, value: total };
+      }
+    });
+  const valueSeries = Object.values(valueSeriesByDate).sort((a, b) => a.ts - b.ts);
 
   // Extrae el histórico de precios de un símbolo concreto desde history.
-  // kind="cartera" busca en snapshots con consensus[]; kind="seguimiento" en watch_snapshot con entries[]
-  // Para cartera filtra también por broker si está dado, para no mezclar RGTI de eToro con RGTI de Revolut.
+  // Solo un punto por día — el más reciente (mayor ts) si hay varias actualizaciones el mismo día.
   function priceHistoryFor(symbol, broker, kind) {
     const SYM = (symbol || "").toUpperCase();
     const BRK = (broker || "").toLowerCase();
-    const points = [];
+    const byDate = {};
     history.forEach((h) => {
       if (!h.payload) return;
+      let price = null;
       if (kind === "cartera" && h.type === "snapshot" && Array.isArray(h.payload.consensus)) {
         const c = h.payload.consensus.find((c) => (c.symbol || "").toUpperCase() === SYM &&
           (BRK ? (c.broker || "").toLowerCase() === BRK : true));
-        if (c && c.price) points.push({ ts: h.ts, date: h.date, price: parseFloat(c.price) });
+        if (c && c.price) price = parseFloat(c.price);
       }
       if (kind === "seguimiento" && h.type === "watch_snapshot" && Array.isArray(h.payload.entries)) {
         const e = h.payload.entries.find((e) => (e.symbol || "").toUpperCase() === SYM);
-        if (e && e.price) points.push({ ts: h.ts, date: h.date, price: parseFloat(e.price) });
+        if (e && e.price) price = parseFloat(e.price);
+      }
+      if (price === null) return;
+      // Conservar el snapshot del día con el mayor ts (el más reciente del día)
+      if (!byDate[h.date] || byDate[h.date].ts < h.ts) {
+        byDate[h.date] = { ts: h.ts, date: h.date, price };
       }
     });
-    return points.sort((a, b) => a.ts - b.ts);
+    return Object.values(byDate).sort((a, b) => a.ts - b.ts);
   }
 
   return (
@@ -731,7 +745,7 @@ export default function App() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <span style={{ color: C.inkDim, fontSize: 13 }}>Valor / Resultado</span>
                   <span style={{ textAlign: "right" }}>
-                    <span style={{ fontFamily: FONT_NUM, fontWeight: 700 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                    <span style={{ fontFamily: FONT_NUM, fontWeight: 700 }}>{fmt$(value)}</span>
                     <span style={{ color: pnl >= 0 ? C.buy : C.sell, fontWeight: 700, fontSize: 13, marginLeft: 8 }}>
                       {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
                     </span>
@@ -857,19 +871,32 @@ export default function App() {
 
       <div style={{ padding: "20px 18px 14px", position: "relative", zIndex: 1 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 19, letterSpacing: -0.5 }}>
-            Northern<span style={{ color: C.accent }}> ✦ </span>Nomad
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 800, fontSize: 19, letterSpacing: -0.5 }}>
+              Northern<span style={{ color: C.accent }}> ✦ </span>Nomad
+            </div>
+            <button onClick={() => setShowSettings(true)} className="nn-press" aria-label="Ajustes"
+              style={{ background: "transparent", border: "none", color: C.inkDim, fontSize: 16,
+                cursor: "pointer", padding: 4, lineHeight: 1 }}>⚙</button>
           </div>
-          <button onClick={handleRefresh} disabled={refreshing} className="nn-press" style={{
-            background: refreshing ? C.panel : C.accent, color: refreshing ? C.inkDim : "#0b0f0c",
-            border: "none", borderRadius: 100, padding: "9px 16px",
-            fontSize: 13, fontWeight: 700, cursor: refreshing ? "default" : "pointer", fontFamily: FONT_DISPLAY,
-            display: "flex", alignItems: "center", gap: 6,
-          }}>
-            <span style={{ display: "inline-block", transform: refreshing ? "rotate(360deg)" : "none",
-              transition: "transform 0.6s" }}>↻</span>
-            {refreshing ? "..." : "Actualizar"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setPrivacy((v) => !v)} className="nn-press" aria-label="Modo privacidad"
+              title={privacy ? "Mostrar valores" : "Ocultar valores"} style={{
+              background: privacy ? C.accent : C.panel, color: privacy ? "#0b0f0c" : C.inkDim,
+              border: "none", borderRadius: 100, width: 38, height: 38, cursor: "pointer", fontSize: 14,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>{privacy ? "🙈" : "👁"}</button>
+            <button onClick={handleRefresh} disabled={refreshing} className="nn-press" aria-label="Actualizar"
+              title="Recargar desde la nube" style={{
+              background: refreshing ? C.panel : C.accent, color: refreshing ? C.inkDim : "#0b0f0c",
+              border: "none", borderRadius: 100, width: 38, height: 38,
+              cursor: refreshing ? "default" : "pointer", fontSize: 16, fontWeight: 700,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <span style={{ display: "inline-block", transform: refreshing ? "rotate(360deg)" : "none",
+                transition: "transform 0.6s" }}>↻</span>
+            </button>
+          </div>
         </div>
         <div style={{ fontSize: 12, color: C.inkDim, marginTop: 4 }}>Cartera personal · sincronizada</div>
       </div>
@@ -923,12 +950,12 @@ export default function App() {
             borderRadius: 24, padding: 22, marginBottom: 14, border: `1px solid ${C.line}` }}>
             <div style={{ fontSize: 12, color: C.inkDim, fontWeight: 500 }}>Valor total</div>
             <div style={{ fontFamily: FONT_NUM, fontSize: 40, fontWeight: 700, letterSpacing: -1, lineHeight: 1.1, marginTop: 4 }}>
-              ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {fmt$(totalValue, { min: 2, max: 2 })}
             </div>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 8,
               background: totalPnl >= 0 ? `${C.buy}1a` : `${C.sell}1a`, color: totalPnl >= 0 ? C.buy : C.sell,
               borderRadius: 100, padding: "4px 10px", fontSize: 13, fontWeight: 700 }}>
-              {totalPnl >= 0 ? "▲" : "▼"} ${Math.abs(totalPnl).toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              {totalPnl >= 0 ? "▲" : "▼"} {privacy ? "•••" : `$${Math.abs(totalPnl).toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
               {totalCost > 0 && <span style={{ opacity: 0.8 }}>({((totalPnl / totalCost) * 100).toFixed(1)}%)</span>}
             </div>
 
@@ -944,7 +971,7 @@ export default function App() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 10, color: C.inkDim, fontWeight: 500, letterSpacing: 0.3 }}>EN ABIERTO</div>
                 <div style={{ fontFamily: FONT_NUM, fontSize: 16, fontWeight: 700, color: totalPnl >= 0 ? C.buy : C.sell, marginTop: 2 }}>
-                  {totalPnl >= 0 ? "+" : ""}${totalPnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  {totalPnl >= 0 ? "+" : ""}{fmt$(totalPnl)}
                 </div>
                 <div style={{ fontSize: 10, color: C.inkDim, marginTop: 1 }}>papel, aún no vendido</div>
               </div>
@@ -952,7 +979,7 @@ export default function App() {
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 10, color: C.inkDim, fontWeight: 500, letterSpacing: 0.3 }}>REALIZADO</div>
                 <div style={{ fontFamily: FONT_NUM, fontSize: 16, fontWeight: 700, color: realizedPnl >= 0 ? C.buy : C.sell, marginTop: 2 }}>
-                  {realizedPnl >= 0 ? "+" : ""}${realizedPnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  {realizedPnl >= 0 ? "+" : ""}{fmt$(realizedPnl)}
                 </div>
                 <div style={{ fontSize: 10, color: C.inkDim, marginTop: 1 }}>ya embolsado en ventas</div>
               </div>
@@ -984,7 +1011,7 @@ export default function App() {
                           {sec}
                         </div>
                         <div style={{ fontSize: 11, color: C.inkDim, fontFamily: FONT_NUM }}>
-                          {items.length} · ${sectorValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          {items.length} · {fmt$(sectorValue)}
                         </div>
                       </div>
                       {items.map((p, idx) => {
@@ -1014,7 +1041,7 @@ export default function App() {
                                 </div>
                               </div>
                               <div style={{ textAlign: "right" }}>
-                                <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>
+                                <div style={{ fontFamily: FONT_NUM, fontWeight: 700, fontSize: 15 }}>{fmt$(value)}</div>
                                 <div style={{ color: pnl >= 0 ? C.buy : C.sell, fontSize: 12, fontWeight: 600 }}>
                                   {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
                                 </div>
@@ -1283,6 +1310,95 @@ export default function App() {
           {shareMsg && <div style={{ padding: "0 18px", fontSize: 12, color: C.buy, textAlign: "right" }}>{shareMsg}</div>}
           <div style={{ padding: "8px 18px 30px" }}>
             <div style={{ fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{expandedReport.content}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Ajustes / Acerca de */}
+      {showSettings && (
+        <div style={{ position: "fixed", inset: 0, background: C.bg, zIndex: 50, maxWidth: 480,
+          margin: "0 auto", overflowY: "auto" }}>
+          <div style={{ position: "absolute", top: -120, left: "50%", transform: "translateX(-50%)",
+            width: 380, height: 380, background: `radial-gradient(circle, ${C.accent}1a, transparent 70%)`,
+            pointerEvents: "none" }} />
+          <div style={{ padding: "18px 18px 8px", display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
+            <button onClick={() => setShowSettings(false)} className="nn-press" style={{ background: C.panel, border: "none",
+              color: C.ink, fontSize: 20, cursor: "pointer", width: 38, height: 38, borderRadius: 12 }}>‹</button>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 16 }}>Ajustes</div>
+          </div>
+
+          <div style={{ padding: "8px 18px 30px", position: "relative", fontSize: 13, lineHeight: 1.55 }}>
+            <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14 }}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.accent, marginBottom: 10 }}>
+                ✦ ACERCA DE
+              </div>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 20, fontWeight: 800, letterSpacing: -0.5, marginBottom: 4 }}>
+                Northern<span style={{ color: C.accent }}> ✦ </span>Nomad
+              </div>
+              <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 14 }}>
+                Visor personal de cartera bursátil
+              </div>
+              <p style={{ marginBottom: 12, marginTop: 0 }}>
+                Northern Nomad es una <b>app de seguimiento personal</b> diseñada para registrar tu cartera, archivar informes diarios y vigilar valores que aún no has comprado. Es un visor y archivo — no toma decisiones por ti ni se conecta a tu broker.
+              </p>
+              <p style={{ marginBottom: 0, marginTop: 0 }}>
+                La app guarda tus datos en una base de datos personal sincronizada (Supabase), accesible desde cualquier dispositivo con tu enlace.
+              </p>
+            </div>
+
+            <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14 }}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.accent, marginBottom: 10 }}>
+                ☉ DE DÓNDE SALEN LOS DATOS
+              </div>
+              <p style={{ marginTop: 0, marginBottom: 12 }}>
+                <b>La app no se conecta a ninguna fuente de datos financieros.</b> Los precios, ratings y análisis los traes tú pegando texto en la pestaña Informes.
+              </p>
+              <p style={{ marginBottom: 12 }}>
+                Ese texto lo genera <b>Claude</b> (IA) buscando en la web cuando le pides el informe. Las fuentes habituales:
+              </p>
+              <div style={{ fontSize: 12, color: C.inkDim, lineHeight: 1.7, marginBottom: 12, paddingLeft: 4 }}>
+                · TipRanks · MarketBeat · StockAnalysis<br/>
+                · ChartMill · Benzinga · CNN Money<br/>
+                · Yahoo Finance · Investing.com · Public.com
+              </div>
+              <p style={{ marginBottom: 0 }}>
+                Estas plataformas <b>agregan</b> los ratings y precios objetivo publicados por bancos de inversión y casas de análisis reales: Goldman Sachs, Morgan Stanley, JP Morgan, Wells Fargo, Citi, Barclays, Bernstein, Rosenblatt, KeyBanc, Needham, entre otros.
+              </p>
+            </div>
+
+            <div style={{ background: C.card, borderRadius: 18, padding: 18, marginBottom: 14 }}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.accent, marginBottom: 10 }}>
+                ⌖ CÓMO LEER EL CONSENSO
+              </div>
+              <p style={{ marginTop: 0, marginBottom: 8 }}>
+                El <b>rating de consenso</b> es la media de las recomendaciones de varios analistas:
+              </p>
+              <div style={{ fontSize: 12, lineHeight: 1.7, marginBottom: 12, paddingLeft: 4 }}>
+                <span style={{ color: C.buy, fontWeight: 700 }}>STRONG BUY</span> — fuerte mayoría recomienda comprar<br/>
+                <span style={{ color: C.buy, fontWeight: 700 }}>BUY</span> — mayoría recomienda comprar<br/>
+                <span style={{ color: C.hold, fontWeight: 700 }}>HOLD</span> — opinión mixta o neutral<br/>
+                <span style={{ color: C.sell, fontWeight: 700 }}>SELL</span> — mayoría recomienda vender
+              </div>
+              <p style={{ marginBottom: 0 }}>
+                El <b>precio objetivo</b> es el precio medio que los analistas creen que el valor podría alcanzar en los próximos 12 meses. No es una garantía: hay dispersión entre analistas y se equivocan con frecuencia.
+              </p>
+            </div>
+
+            <div style={{ background: `${C.sell}10`, borderRadius: 18, padding: 18, marginBottom: 14, border: `1px solid ${C.sell}33` }}>
+              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, letterSpacing: 0.5, color: C.sell, marginBottom: 10 }}>
+                ⚠ AVISO IMPORTANTE
+              </div>
+              <p style={{ marginTop: 0, marginBottom: 8 }}>
+                Esta app es una herramienta personal de seguimiento. <b>No es asesoramiento financiero ni una recomendación de inversión.</b>
+              </p>
+              <p style={{ marginBottom: 0 }}>
+                Las decisiones de invertir, comprar o vender son tuyas y bajo tu responsabilidad. Invertir en bolsa conlleva riesgo de pérdida del capital, especialmente en valores volátiles o muy concentrados sectorialmente.
+              </p>
+            </div>
+
+            <div style={{ fontSize: 10, color: C.inkDim, textAlign: "center", marginTop: 18 }}>
+              Northern Nomad · uso personal
+            </div>
           </div>
         </div>
       )}
