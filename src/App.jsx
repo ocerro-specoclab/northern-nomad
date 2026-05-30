@@ -214,6 +214,8 @@ export default function App() {
   const [shareMsg, setShareMsg] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [privacy, setPrivacy] = useState(false);
+  const [editingNote, setEditingNote] = useState(null); // {kind:'cartera'|'seguimiento', id, value}
+  const [confirmDelete, setConfirmDelete] = useState(null); // {kind, id, symbol}
   // formateador de importes que respeta el modo privacidad
   const fmt$ = (v, opts = {}) => privacy ? "•••" : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: opts.min ?? 0, maximumFractionDigits: opts.max ?? 2 })}`;
   const [showAddManual, setShowAddManual] = useState(false);
@@ -300,6 +302,7 @@ export default function App() {
         note_long: r.note_long || prev.note_long || "",
         analysis: r.analysis || prev.analysis || "",
         analysis_date: r.analysis ? (r.analysis_date || todayISO()) : (prev.analysis_date || ""),
+        my_note: prev.my_note || "",
       };
     });
 
@@ -477,6 +480,7 @@ export default function App() {
               note_long: r.note_long || prev.note_long || "",
               analysis: r.analysis || prev.analysis || "",
               analysis_date: r.analysis ? date : (prev.analysis_date || ""),
+              my_note: prev.my_note || "",
             };
           });
           const snapshot = {
@@ -512,6 +516,7 @@ export default function App() {
               analysis: r.analysis || prev.analysis || "",
               analysis_date: r.analysis ? date : (prev.analysis_date || ""),
               added_date: prev.added_date || date,
+              my_note: prev.my_note || "",
             };
           });
           // upsert manual: borra los símbolos que vienen y los inserta
@@ -555,6 +560,50 @@ export default function App() {
     } catch (err) { setError("Error al borrar: " + err.message); }
   }
 
+  // Guardar la nota manual del usuario (campo my_note, no se pisa con informes)
+  async function saveMyNote() {
+    if (!editingNote) return;
+    const { kind, id, value } = editingNote;
+    const table = kind === "seguimiento" ? "watchlist" : "positions";
+    try {
+      await supabase.from(table).update({ my_note: value }).eq("id", id);
+      // Actualizar estado local
+      if (kind === "seguimiento") {
+        setWatchlist((ws) => ws.map((w) => w.id === id ? { ...w, my_note: value } : w));
+        if (selectedWatch && selectedWatch.id === id) setSelectedWatch({ ...selectedWatch, my_note: value });
+      } else {
+        setPositions((ps) => ps.map((p) => p.id === id ? { ...p, my_note: value } : p));
+        if (selected && selected.id === id) setSelected({ ...selected, my_note: value });
+      }
+      setEditingNote(null);
+    } catch (err) {
+      setError("Error al guardar nota: " + err.message);
+    }
+  }
+
+  // Borrar una posición de cartera (con confirmación)
+  async function deletePosition(id) {
+    try {
+      await supabase.from("positions").delete().eq("id", id);
+      setPositions((ps) => ps.filter((p) => p.id !== id));
+      setSelected(null);
+      setConfirmDelete(null);
+    } catch (err) {
+      setError("Error al borrar: " + err.message);
+    }
+  }
+
+  async function deleteWatchAndClose(id) {
+    try {
+      await supabase.from("watchlist").delete().eq("id", id);
+      setWatchlist((w) => w.filter((x) => x.id !== id));
+      setSelectedWatch(null);
+      setConfirmDelete(null);
+    } catch (err) {
+      setError("Error al borrar: " + err.message);
+    }
+  }
+
   // Añadir o actualizar un valor a mano (un solo valor, sin reemplazar la cartera)
   async function saveManualPosition() {
     if (!manualRow || !manualRow.symbol.trim()) {
@@ -579,6 +628,7 @@ export default function App() {
         note_long: prev.note_long || "",
         analysis: prev.analysis || "",
         analysis_date: prev.analysis_date || "",
+        my_note: prev.my_note || "",
       };
       // upsert manual: borrar la posición con esa clave y volver a insertar
       if (prev.id !== undefined) {
@@ -782,6 +832,32 @@ export default function App() {
                 </div>
               )}
 
+              {/* Mi nota (manual del usuario, nunca pisada por informes) */}
+              <div style={{ background: C.card, borderRadius: 16, padding: 14, marginBottom: 14,
+                borderLeft: `3px solid ${C.accent}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: p.my_note ? 6 : 0 }}>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 0.5 }}>
+                    ✎ MI NOTA
+                  </div>
+                  <button onClick={() => setEditingNote({ kind: "cartera", id: p.id, value: p.my_note || "" })}
+                    className="nn-press" style={{ background: C.panel, border: "none", color: C.accent,
+                      fontSize: 12, fontWeight: 600, cursor: "pointer", borderRadius: 100, padding: "4px 10px" }}>
+                    {p.my_note ? "Editar" : "Añadir"}
+                  </button>
+                </div>
+                {p.my_note && <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap", marginTop: 4 }}>{p.my_note}</div>}
+              </div>
+
+              {/* Acciones (borrar valor) */}
+              <div style={{ marginBottom: 14 }}>
+                <button onClick={() => setConfirmDelete({ kind: "cartera", id: p.id, symbol: p.symbol })}
+                  className="nn-press" style={{ width: "100%", background: `${C.sell}1a`, color: C.sell,
+                    border: `1px solid ${C.sell}55`, borderRadius: 100, padding: "11px",
+                    fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: FONT_DISPLAY }}>
+                  🗑 Eliminar de cartera
+                </button>
+              </div>
+
               <div style={{ fontSize: 10, color: C.inkDim, textAlign: "center" }}>
                 No es asesoramiento financiero.
               </div>
@@ -860,6 +936,32 @@ export default function App() {
                   <div style={{ fontSize: 14, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{w.analysis}</div>
                 </div>
               )}
+
+              {/* Mi nota (manual) */}
+              <div style={{ background: C.card, borderRadius: 16, padding: 14, marginBottom: 14,
+                borderLeft: `3px solid ${C.accent}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: w.my_note ? 6 : 0 }}>
+                  <div style={{ fontFamily: FONT_DISPLAY, fontSize: 11, fontWeight: 700, color: C.accent, letterSpacing: 0.5 }}>
+                    ✎ MI NOTA
+                  </div>
+                  <button onClick={() => setEditingNote({ kind: "seguimiento", id: w.id, value: w.my_note || "" })}
+                    className="nn-press" style={{ background: C.panel, border: "none", color: C.accent,
+                      fontSize: 12, fontWeight: 600, cursor: "pointer", borderRadius: 100, padding: "4px 10px" }}>
+                    {w.my_note ? "Editar" : "Añadir"}
+                  </button>
+                </div>
+                {w.my_note && <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap", marginTop: 4 }}>{w.my_note}</div>}
+              </div>
+
+              {/* Borrar de seguimiento */}
+              <div style={{ marginBottom: 14 }}>
+                <button onClick={() => setConfirmDelete({ kind: "seguimiento", id: w.id, symbol: w.symbol })}
+                  className="nn-press" style={{ width: "100%", background: `${C.sell}1a`, color: C.sell,
+                    border: `1px solid ${C.sell}55`, borderRadius: 100, padding: "11px",
+                    fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: FONT_DISPLAY }}>
+                  🗑 Eliminar de seguimiento
+                </button>
+              </div>
 
               <div style={{ fontSize: 10, color: C.inkDim, textAlign: "center" }}>
                 No es asesoramiento financiero.
@@ -1036,6 +1138,7 @@ export default function App() {
                                     {p.symbol}
                                     {p.broker ? <span style={{ fontSize: 9, fontWeight: 600, color: C.inkDim,
                                       background: C.panelHi, borderRadius: 100, padding: "2px 7px" }}>{p.broker}</span> : null}
+                                    {p.my_note ? <span title="Tiene tu nota" style={{ width: 6, height: 6, borderRadius: 100, background: C.accent, flexShrink: 0 }} /> : null}
                                   </div>
                                   <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>{p.quantity} uds · ${p.avg_price}</div>
                                 </div>
@@ -1081,7 +1184,10 @@ export default function App() {
                                 {w.symbol.slice(0, 2)}
                               </div>
                               <div style={{ flex: 1 }}>
-                                <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15 }}>{w.symbol}</div>
+                                <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 15, display: "flex", alignItems: "center", gap: 6 }}>
+                                  {w.symbol}
+                                  {w.my_note ? <span title="Tiene tu nota" style={{ width: 6, height: 6, borderRadius: 100, background: C.accent, flexShrink: 0 }} /> : null}
+                                </div>
                                 <div style={{ fontSize: 11, color: C.inkDim }}>{w.sector || "—"}</div>
                               </div>
                             </div>
@@ -1398,6 +1504,59 @@ export default function App() {
 
             <div style={{ fontSize: 10, color: C.inkDim, textAlign: "center", marginTop: 18 }}>
               Northern Nomad · uso personal
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal editar Mi Nota */}
+      {editingNote && (
+        <div onClick={() => setEditingNote(null)} style={{ position: "fixed", inset: 0,
+          background: "rgba(0,0,0,0.75)", zIndex: 70, display: "flex", alignItems: "flex-end",
+          justifyContent: "center" }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, width: "100%",
+            maxWidth: 480, borderRadius: "24px 24px 0 0", padding: 22, animation: "nn-rise 0.3s ease both" }}>
+            <div style={{ width: 38, height: 4, background: C.line, borderRadius: 100, margin: "0 auto 16px" }} />
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 18, marginBottom: 6 }}>
+              ✎ Mi nota
+            </div>
+            <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 14, lineHeight: 1.4 }}>
+              Tu anotación personal. No se borra cuando guardas informes nuevos.
+            </div>
+            <textarea value={editingNote.value} onChange={(e) => setEditingNote({ ...editingNote, value: e.target.value })}
+              placeholder="Escribe lo que quieras recordar sobre este valor..."
+              rows={6} autoFocus style={{ width: "100%", background: C.bg, color: C.ink, border: `1px solid ${C.line}`,
+                borderRadius: 12, padding: 12, fontSize: 14, fontFamily: FONT_BODY, resize: "vertical", marginBottom: 14, lineHeight: 1.5 }} />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setEditingNote(null)} style={btnGhost()}>Cancelar</button>
+              <button onClick={saveMyNote} style={btn(C.accent)}>Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmar borrado */}
+      {confirmDelete && (
+        <div onClick={() => setConfirmDelete(null)} style={{ position: "fixed", inset: 0,
+          background: "rgba(0,0,0,0.75)", zIndex: 70, display: "flex", alignItems: "center",
+          justifyContent: "center", padding: 22 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, width: "100%",
+            maxWidth: 380, borderRadius: 18, padding: 22, animation: "nn-rise 0.3s ease both" }}>
+            <div style={{ fontFamily: FONT_DISPLAY, fontWeight: 700, fontSize: 17, marginBottom: 8, color: C.sell }}>
+              ¿Eliminar {confirmDelete.symbol}?
+            </div>
+            <div style={{ fontSize: 13, color: C.inkDim, marginBottom: 18, lineHeight: 1.5 }}>
+              {confirmDelete.kind === "cartera"
+                ? "Se eliminará de tu cartera. El histórico de actualizaciones se mantiene. Esta acción no se puede deshacer."
+                : "Se eliminará de seguimiento. Esta acción no se puede deshacer."}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setConfirmDelete(null)} style={btnGhost()}>Cancelar</button>
+              <button onClick={() => confirmDelete.kind === "cartera" ? deletePosition(confirmDelete.id) : deleteWatchAndClose(confirmDelete.id)}
+                style={{ flex: 1, background: C.sell, color: "#fff", border: "none", borderRadius: 100,
+                  padding: "13px", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT_DISPLAY }}>
+                Eliminar
+              </button>
             </div>
           </div>
         </div>
