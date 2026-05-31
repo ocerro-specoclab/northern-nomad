@@ -216,6 +216,10 @@ export default function App() {
   const [privacy, setPrivacy] = useState(false);
   const [editingNote, setEditingNote] = useState(null); // {kind:'cartera'|'seguimiento', id, value}
   const [confirmDelete, setConfirmDelete] = useState(null); // {kind, id, symbol}
+  const [disciplineMode, setDisciplineMode] = useState(() => {
+    try { return localStorage.getItem("nn-discipline") === "1"; } catch { return false; }
+  });
+  const [expandedQ, setExpandedQ] = useState(null); // qué pregunta del checklist está abierta
   // formateador de importes que respeta el modo privacidad
   const fmt$ = (v, opts = {}) => privacy ? "•••" : `$${Number(v).toLocaleString(undefined, { minimumFractionDigits: opts.min ?? 0, maximumFractionDigits: opts.max ?? 2 })}`;
   const [showAddManual, setShowAddManual] = useState(false);
@@ -303,6 +307,7 @@ export default function App() {
         analysis: r.analysis || prev.analysis || "",
         analysis_date: r.analysis ? (r.analysis_date || todayISO()) : (prev.analysis_date || ""),
         my_note: prev.my_note || "",
+        checklist: prev.checklist || {},
       };
     });
 
@@ -481,6 +486,7 @@ export default function App() {
               analysis: r.analysis || prev.analysis || "",
               analysis_date: r.analysis ? date : (prev.analysis_date || ""),
               my_note: prev.my_note || "",
+        checklist: prev.checklist || {},
             };
           });
           const snapshot = {
@@ -604,6 +610,45 @@ export default function App() {
     }
   }
 
+  // Toggle modo disciplina (persiste en localStorage)
+  function toggleDiscipline() {
+    setDisciplineMode((v) => {
+      const next = !v;
+      try { localStorage.setItem("nn-discipline", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  }
+
+  // Marcar/desmarcar pregunta del checklist de una posición
+  async function toggleCheck(positionId, questionKey) {
+    const p = positions.find((x) => x.id === positionId);
+    if (!p) return;
+    const cur = p.checklist || {};
+    const next = { ...cur, [questionKey]: !cur[questionKey] };
+    try {
+      await supabase.from("positions").update({ checklist: next }).eq("id", positionId);
+      setPositions((ps) => ps.map((x) => x.id === positionId ? { ...x, checklist: next } : x));
+      if (selected && selected.id === positionId) setSelected({ ...selected, checklist: next });
+    } catch (err) {
+      setError("Error al actualizar checklist: " + err.message);
+    }
+  }
+
+  // Devuelve el estado del checklist: { buyDone, sellDone, buyCount, sellCount }
+  function checklistStatus(p) {
+    const c = p.checklist || {};
+    const buyKeys = ["tesis", "tp_sl", "soporta_50", "no_urgente", "no_concentra"];
+    const sellKeys = ["razon_definida", "parcial_tp", "respetar_sl", "no_emocion"];
+    const buyCount = buyKeys.filter((k) => c[k]).length;
+    const sellCount = sellKeys.filter((k) => c[k]).length;
+    return {
+      buyDone: buyCount === buyKeys.length,
+      sellDone: sellCount === sellKeys.length,
+      buyCount, buyTotal: buyKeys.length,
+      sellCount, sellTotal: sellKeys.length,
+    };
+  }
+
   // Añadir o actualizar un valor a mano (un solo valor, sin reemplazar la cartera)
   async function saveManualPosition() {
     if (!manualRow || !manualRow.symbol.trim()) {
@@ -629,6 +674,7 @@ export default function App() {
         analysis: prev.analysis || "",
         analysis_date: prev.analysis_date || "",
         my_note: prev.my_note || "",
+        checklist: prev.checklist || {},
       };
       // upsert manual: borrar la posición con esa clave y volver a insertar
       if (prev.id !== undefined) {
@@ -848,6 +894,126 @@ export default function App() {
                 {p.my_note && <div style={{ fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap", marginTop: 4 }}>{p.my_note}</div>}
               </div>
 
+              {/* Checklist Modo Disciplina */}
+              {disciplineMode && (() => {
+                const status = checklistStatus(p);
+                const c = p.checklist || {};
+                const posValue = p.current_price * p.quantity;
+                const half = posValue / 2;
+                const sectorTotal = positions.filter((x) => (x.sector || "Sin sector") === (p.sector || "Sin sector"))
+                  .reduce((s, x) => s + x.current_price * x.quantity, 0);
+                const sectorPct = totalValue > 0 ? (sectorTotal / totalValue) * 100 : 0;
+                const tpDist = (p.target > 0 && p.current_price > 0) ? ((p.target - p.current_price) / p.current_price) * 100 : null;
+                const slPrice = parseFloat((p.note_short || "").match(/SL\s*\$?(\d+(?:\.\d+)?)/i)?.[1]) || null;
+                const slDist = (slPrice && p.current_price > 0) ? ((p.current_price - slPrice) / p.current_price) * 100 : null;
+
+                const buyQuestions = [
+                  { key: "tesis", q: "¿Puedo explicar la tesis en una frase?",
+                    helpGeneral: "Una buena tesis dice qué hace la empresa, por qué vale más de lo que cotiza y qué lo demostrará. Bandera roja: «porque sube» o «porque la recomiendan».",
+                    helpValor: p.my_note ? `Tu nota actual: "${p.my_note.slice(0, 120)}${p.my_note.length > 120 ? '…' : ''}"` : "No tienes nota personal todavía. Sería buen momento para escribirla." },
+                  { key: "tp_sl", q: "¿Tengo TP y SL definidos?",
+                    helpGeneral: "TP es dónde recojo, SL dónde admito el error. Decidir ahora en frío.",
+                    helpValor: p.target > 0 ? `✓ TP $${p.target} definido. ${slPrice ? `SL $${slPrice} aparece en notas.` : '⚠ Define un SL en la nota corto plazo (formato: "SL $XX") antes de comprar más.'}` : "⚠ Falta el TP. Defínelo antes." },
+                  { key: "soporta_50", q: "Si cae un 50%, ¿es soportable?",
+                    helpGeneral: "Mirarlo en euros, no en %. Si esa pérdida me haría vender en pánico, la posición es demasiado grande.",
+                    helpValor: posValue > 0 ? `Posición actual ~$${posValue.toFixed(0)}. Un -50% serían ~$${half.toFixed(0)} de pérdida. ¿Lo dormirías tranquilo?` : "Sin posición todavía. Calcula antes de comprar: si planeas meter $X, ¿perder $X/2 es soportable?" },
+                  { key: "no_urgente", q: "¿Necesito hacerlo hoy?",
+                    helpGeneral: "El mercado estará ahí mañana. Si la única urgencia es ganas de operar, esa es la respuesta. Bandera roja: comprar el mismo día que ya he operado.",
+                    helpValor: "Pregúntate: ¿qué cambia entre comprar hoy y comprar el lunes? Si la respuesta es «nada concreto», no es urgente." },
+                  { key: "no_concentra", q: "¿Me concentra demasiado?",
+                    helpGeneral: "Si ese sector ya es la mitad o más de la cartera, otra acción del mismo sector no diversifica: multiplica el riesgo.",
+                    helpValor: `Sector "${p.sector || 'Sin sector'}" pesa ahora ${sectorPct.toFixed(0)}% de tu cartera ($${sectorTotal.toFixed(0)} de $${totalValue.toFixed(0)}).${sectorPct >= 50 ? ' ⚠ Por encima del 50%: añadir más concentra, no diversifica.' : ''}` },
+                ];
+
+                const sellQuestions = [
+                  { key: "razon_definida", q: "¿Vendo por una razón decidida de antemano?",
+                    helpGeneral: "Solo tres legítimas: llegó al TP, saltó el SL, o se rompió la tesis. Si no, suele ser emoción.",
+                    helpValor: `${tpDist !== null ? `A un ${tpDist >= 0 ? '+' : ''}${tpDist.toFixed(1)}% del TP ($${p.target}).` : ''} ${slDist !== null ? ` Estás un ${slDist.toFixed(1)}% por encima del SL ($${slPrice}).` : ''}`.trim() || "Define TP y SL para que esta pregunta tenga referencia." },
+                  { key: "parcial_tp", q: "¿Recoger solo una parte en el TP?",
+                    helpGeneral: "Vender un tercio asegura ganancia y deja correr el resto. No es todo o nada.",
+                    helpValor: posValue > 0 ? `Posición ~$${posValue.toFixed(0)}. Un tercio sería ~$${(posValue/3).toFixed(0)}.` : "" },
+                  { key: "respetar_sl", q: "¿Respeto el SL sin moverlo?",
+                    helpGeneral: "Bajarlo cuando se acerca lo convierte en un deseo, no en un límite. El SL solo se mueve hacia arriba.",
+                    helpValor: slPrice ? `Tu SL actual: $${slPrice}. Si se acerca, no lo bajes.` : "Sin SL definido en notas." },
+                  { key: "no_emocion", q: "¿Tesis o emoción?",
+                    helpGeneral: "Un día rojo es el peaje, no una señal. Pregúntate si venderías estando verde el mismo día.",
+                    helpValor: "Si la respuesta a «¿vendería si hoy estuviese verde?» es no, probablemente sea emoción." },
+                ];
+
+                const renderQuestion = (Q, group) => {
+                  const checked = !!c[Q.key];
+                  const isOpen = expandedQ === Q.key;
+                  return (
+                    <div key={Q.key} style={{ marginBottom: 8 }}>
+                      <div onClick={() => setExpandedQ(isOpen ? null : Q.key)} className="nn-press"
+                        style={{ background: checked ? `${C.buy}10` : C.panel, borderRadius: 12,
+                          padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10,
+                          border: checked ? `1px solid ${C.buy}44` : `1px solid ${C.line}` }}>
+                        <button onClick={(e) => { e.stopPropagation(); toggleCheck(p.id, Q.key); }}
+                          style={{ width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                            background: checked ? C.buy : "transparent",
+                            border: checked ? "none" : `1.5px solid ${C.inkDim}`,
+                            color: "#0b0f0c", fontSize: 13, fontWeight: 700, cursor: "pointer",
+                            display: "flex", alignItems: "center", justifyContent: "center" }}>
+                          {checked ? "✓" : ""}
+                        </button>
+                        <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: checked ? C.inkDim : C.ink, textDecoration: checked ? "line-through" : "none" }}>
+                          {Q.q}
+                        </div>
+                        <span style={{ color: C.inkDim, fontSize: 14, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>⌄</span>
+                      </div>
+                      {isOpen && (
+                        <div style={{ background: C.bg, borderRadius: 12, padding: 12, marginTop: 4, fontSize: 12, lineHeight: 1.5, color: C.inkDim }}>
+                          <div style={{ marginBottom: Q.helpValor ? 8 : 0 }}>{Q.helpGeneral}</div>
+                          {Q.helpValor && (
+                            <div style={{ background: C.card, borderRadius: 8, padding: 10, color: C.ink, fontSize: 12 }}>
+                              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, color: C.accent, fontWeight: 700, marginBottom: 4, letterSpacing: 0.3 }}>
+                                EN TU CASO · {p.symbol}
+                              </div>
+                              {Q.helpValor}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                        <div style={{ fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, color: C.accent, letterSpacing: 0.5 }}>
+                          ⚖ CHECKLIST DE COMPRA
+                        </div>
+                        <div style={{ fontSize: 11, color: status.buyDone ? C.buy : C.inkDim, fontWeight: 700 }}>
+                          {status.buyCount}/{status.buyTotal} {status.buyDone ? "✓" : ""}
+                        </div>
+                      </div>
+                      {buyQuestions.map((Q) => renderQuestion(Q, "buy"))}
+                    </div>
+
+                    {status.buyDone && (
+                      <div style={{ background: C.card, borderRadius: 18, padding: 16,
+                        border: `1px solid ${C.accent}44` }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                          <div style={{ fontFamily: FONT_DISPLAY, fontSize: 12, fontWeight: 700, color: C.accent, letterSpacing: 0.5 }}>
+                            ⚖ CHECKLIST DE VENTA
+                          </div>
+                          <div style={{ fontSize: 11, color: status.sellDone ? C.buy : C.inkDim, fontWeight: 700 }}>
+                            {status.sellCount}/{status.sellTotal} {status.sellDone ? "✓" : ""}
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 12, lineHeight: 1.4, fontStyle: "italic" }}>
+                          Usar cuando estés planteándote vender. La app no decide por ti — solo pone los hechos delante.
+                        </div>
+                        {sellQuestions.map((Q) => renderQuestion(Q, "sell"))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Acciones (borrar valor) */}
               <div style={{ marginBottom: 14 }}>
                 <button onClick={() => setConfirmDelete({ kind: "cartera", id: p.id, symbol: p.symbol })}
@@ -980,6 +1146,15 @@ export default function App() {
             <button onClick={() => setShowSettings(true)} className="nn-press" aria-label="Ajustes"
               style={{ background: "transparent", border: "none", color: C.inkDim, fontSize: 16,
                 cursor: "pointer", padding: 4, lineHeight: 1 }}>⚙</button>
+            <button onClick={toggleDiscipline} className="nn-press"
+              title={disciplineMode ? "Modo disciplina ACTIVO" : "Activar modo disciplina"}
+              style={{ background: disciplineMode ? `${C.accent}33` : "transparent",
+                border: disciplineMode ? `1px solid ${C.accent}` : "1px solid transparent",
+                color: disciplineMode ? C.accent : C.inkDim, fontSize: 13, cursor: "pointer",
+                padding: "3px 8px", lineHeight: 1, borderRadius: 100, fontFamily: FONT_DISPLAY,
+                fontWeight: 700, letterSpacing: 0.3 }}>
+              ⚖ {disciplineMode ? "ON" : "OFF"}
+            </button>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button onClick={() => setPrivacy((v) => !v)} className="nn-press" aria-label="Modo privacidad"
@@ -1139,6 +1314,12 @@ export default function App() {
                                     {p.broker ? <span style={{ fontSize: 9, fontWeight: 600, color: C.inkDim,
                                       background: C.panelHi, borderRadius: 100, padding: "2px 7px" }}>{p.broker}</span> : null}
                                     {p.my_note ? <span title="Tiene tu nota" style={{ width: 6, height: 6, borderRadius: 100, background: C.accent, flexShrink: 0 }} /> : null}
+                                    {disciplineMode && !checklistStatus(p).buyDone ? (
+                                      <span title="Checklist sin completar" style={{ fontSize: 10, color: C.hold,
+                                        background: `${C.hold}1a`, borderRadius: 100, padding: "1px 6px", fontWeight: 700 }}>
+                                        ⚖ {checklistStatus(p).buyCount}/{checklistStatus(p).buyTotal}
+                                      </span>
+                                    ) : null}
                                   </div>
                                   <div style={{ fontSize: 11, color: C.inkDim, marginTop: 2 }}>{p.quantity} uds · ${p.avg_price}</div>
                                 </div>
