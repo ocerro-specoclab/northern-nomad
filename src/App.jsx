@@ -637,8 +637,8 @@ export default function App() {
   // Devuelve el estado del checklist: { buyDone, sellDone, buyCount, sellCount }
   function checklistStatus(p) {
     const c = p.checklist || {};
-    const buyKeys = ["tesis", "tp_sl", "soporta_50", "no_urgente", "no_concentra"];
-    const sellKeys = ["razon_definida", "parcial_tp", "respetar_sl", "no_emocion"];
+    const buyKeys = ["tesis", "ruptura", "tp_sl", "soporta_50", "tamano_pos", "no_urgente", "no_revancha"];
+    const sellKeys = ["razon_objetiva", "tesis_rota", "respetar_sl", "rebalanceo", "venderias_verde", "total_o_parcial"];
     const buyCount = buyKeys.filter((k) => c[k]).length;
     const sellCount = sellKeys.filter((k) => c[k]).length;
     return {
@@ -908,39 +908,87 @@ export default function App() {
                 const slDist = (slPrice && p.current_price > 0) ? ((p.current_price - slPrice) / p.current_price) * 100 : null;
 
                 const buyQuestions = [
-                  { key: "tesis", q: "¿Puedo explicar la tesis en una frase?",
-                    helpGeneral: "Una buena tesis dice qué hace la empresa, por qué vale más de lo que cotiza y qué lo demostrará. Bandera roja: «porque sube» o «porque la recomiendan».",
-                    helpValor: p.my_note ? `Tu nota actual: "${p.my_note.slice(0, 120)}${p.my_note.length > 120 ? '…' : ''}"` : "No tienes nota personal todavía. Sería buen momento para escribirla." },
-                  { key: "tp_sl", q: "¿Tengo TP y SL definidos?",
-                    helpGeneral: "TP es dónde recojo, SL dónde admito el error. Decidir ahora en frío.",
-                    helpValor: p.target > 0 ? `✓ TP $${p.target} definido. ${slPrice ? `SL $${slPrice} aparece en notas.` : '⚠ Define un SL en la nota corto plazo (formato: "SL $XX") antes de comprar más.'}` : "⚠ Falta el TP. Defínelo antes." },
-                  { key: "soporta_50", q: "Si cae un 50%, ¿es soportable?",
-                    helpGeneral: "Mirarlo en euros, no en %. Si esa pérdida me haría vender en pánico, la posición es demasiado grande.",
-                    helpValor: posValue > 0 ? `Posición actual ~$${posValue.toFixed(0)}. Un -50% serían ~$${half.toFixed(0)} de pérdida. ¿Lo dormirías tranquilo?` : "Sin posición todavía. Calcula antes de comprar: si planeas meter $X, ¿perder $X/2 es soportable?" },
-                  { key: "no_urgente", q: "¿Necesito hacerlo hoy?",
-                    helpGeneral: "El mercado estará ahí mañana. Si la única urgencia es ganas de operar, esa es la respuesta. Bandera roja: comprar el mismo día que ya he operado.",
-                    helpValor: "Pregúntate: ¿qué cambia entre comprar hoy y comprar el lunes? Si la respuesta es «nada concreto», no es urgente." },
-                  { key: "no_concentra", q: "¿Me concentra demasiado?",
-                    helpGeneral: "Si ese sector ya es la mitad o más de la cartera, otra acción del mismo sector no diversifica: multiplica el riesgo.",
-                    helpValor: `Sector "${p.sector || 'Sin sector'}" pesa ahora ${sectorPct.toFixed(0)}% de tu cartera ($${sectorTotal.toFixed(0)} de $${totalValue.toFixed(0)}).${sectorPct >= 50 ? ' ⚠ Por encima del 50%: añadir más concentra, no diversifica.' : ''}` },
+                  // ── NEGOCIO ──
+                  { key: "tesis", group: "Negocio", q: "¿Puedo explicar la tesis en una frase?",
+                    helpGeneral: "La regla de Peter Lynch: si no puedes explicar en una frase por qué compras un valor, no lo entiendes lo suficiente. Una buena tesis dice qué hace la empresa, por qué cotiza por debajo de lo que vale y qué catalizador concreto lo demostrará en los próximos 12-24 meses.",
+                    helpResponse: "✓ Bien: «Compro RGTI porque el gobierno acaba de inyectar $100M y los pedidos de defensa crecerán cuando se valide su arquitectura, lo veremos en resultados Q2».\n✗ Mal: «porque sube», «porque la recomiendan», «por intuición», «por el sector».",
+                    helpValor: p.my_note ? `Tu nota actual: "${p.my_note.slice(0, 150)}${p.my_note.length > 150 ? '…' : ''}"` : "⚠ No tienes nota personal todavía. Antes de marcar esto, escribe tu tesis en una frase en «Mi nota».",
+                    redFlag: !p.my_note && "Sin tesis escrita es difícil saber por qué estás invertido. Ese vacío suele revelar que la compra fue impulsiva." },
+
+                  { key: "ruptura", group: "Negocio", q: "¿Qué rompería mi tesis?",
+                    helpGeneral: "Un profesional siempre define la condición de salida ANTES de entrar. Si no sabes qué tendría que pasar para reconocer que te equivocaste, ya estás perdido. Esta pregunta es la diferencia entre invertir y apostar.",
+                    helpResponse: "Para cada tesis define 1-2 hechos concretos que la romperían:\n• «Si los resultados Q2 muestran caída de pedidos» (no «si baja un 20%»)\n• «Si pierden el contrato X»\n• «Si entra un competidor con mejor tecnología»\nSi no se te ocurre nada, probablemente no entiendes el negocio.",
+                    helpValor: `Vigila estos campos de tu valor: notas a medio plazo (${p.note_mid ? '✓ tiene contenido' : '⚠ vacío'}), análisis (${p.analysis ? '✓ tiene contenido' : '⚠ vacío'}). Ahí debe estar la condición de ruptura.` },
+
+                  // ── RIESGO Y DIMENSIÓN ──
+                  { key: "tp_sl", group: "Riesgo y dimensión", q: "¿Tengo TP y SL definidos en frío?",
+                    helpGeneral: "El TP (take profit) es donde recojo ganancias, el SL (stop loss) donde acepto que me equivoqué. Se definen ANTES de comprar, no después. Definirlos en caliente, cuando ya estás dentro y emocionado, es como diseñar el freno cuando ya vas a 120 km/h.",
+                    helpResponse: "Regla profesional: ratio TP/SL mínimo 2:1. Si arriesgas 1$ para ganar 1$, no compensa.\n• TP basado en consenso o valoración fundamental, no en «hasta donde llegue».\n• SL basado en zona técnica de soporte o pérdida máxima asumible, no en «cuando me asuste».",
+                    helpValor: `${p.target > 0 ? `✓ TP definido: $${p.target} (${tpDist !== null ? `${tpDist > 0 ? '+' : ''}${tpDist.toFixed(1)}% desde el precio actual` : ''})` : '⚠ Falta el TP'}.\n${slPrice ? `✓ SL en notas: $${slPrice} (${slDist !== null ? `${slDist.toFixed(1)}% por encima del precio actual` : ''})` : '⚠ No detecto SL en tus notas. Escríbelo en formato «SL $XX» en la nota corto plazo.'}.\n${p.target > 0 && slPrice ? `Ratio R/B actual: 1:${(((p.target - p.current_price) / (p.current_price - slPrice))).toFixed(1)}` : ''}`,
+                    redFlag: (!p.target || !slPrice) && "Operar sin SL es la causa nº1 de pérdidas grandes en inversores particulares." },
+
+                  { key: "soporta_50", group: "Riesgo y dimensión", q: "Si esta posición cae un 50%, ¿lo soporto?",
+                    helpGeneral: "La prueba del sueño: si esa pérdida te impediría dormir o te haría vender en pánico, la posición es demasiado grande. Los profesionales dimensionan posiciones de modo que ningún error individual ponga en riesgo la cartera entera.",
+                    helpResponse: "Mira la cifra en euros, no en porcentaje. Pregúntate: «¿perdería ese dinero y al día siguiente seguiría racional?». Si la respuesta es no, reduce el tamaño antes de comprar.\n\nRegla habitual: ninguna posición debería poder perderte más de un 2-5% de tu cartera total en su peor escenario.",
+                    helpValor: posValue > 0
+                      ? `Posición actual ~$${posValue.toFixed(0)}.\n• -50% = pérdida de ~$${half.toFixed(0)}.\n• Eso es un ${((half / totalValue) * 100).toFixed(1)}% de tu cartera total ($${totalValue.toFixed(0)}).\n${(half / totalValue) > 0.05 ? '⚠ Por encima del 5% recomendado para una sola posición.' : '✓ Dentro de zona razonable.'}`
+                      : "Sin posición todavía. Calcula antes: si planeas meter $X, ¿perder $X/2 sería soportable?",
+                    redFlag: posValue > 0 && (half / totalValue) > 0.10 && "Esta posición puede destruir más del 10% de tu cartera si va mal. Demasiado grande." },
+
+                  { key: "tamano_pos", group: "Riesgo y dimensión", q: "¿El tamaño de posición es coherente con mi convicción?",
+                    helpGeneral: "Los profesionales NO ponen el mismo dinero en cada idea. Convicción alta = posición mayor. Convicción baja o experimento = posición pequeña. Tener todas las posiciones del mismo tamaño es síntoma de que no priorizas.",
+                    helpResponse: "Escala orientativa para inversor particular:\n• Convicción alta + entiendes el negocio: 8-15% de cartera\n• Convicción media: 4-8%\n• Especulativa o tesis no validada: máximo 2-3%\n\nSi todas tus posiciones rondan el mismo %, falta jerarquía de ideas.",
+                    helpValor: posValue > 0
+                      ? `Esta posición pesa ${((posValue / totalValue) * 100).toFixed(1)}% de tu cartera. ¿Es coherente con cuánto crees en la tesis? Compara con las otras posiciones para ver si hay jerarquía.`
+                      : "Antes de comprar, decide qué % de cartera te merece esta idea." },
+
+                  // ── DISCIPLINA MENTAL ──
+                  { key: "no_urgente", group: "Disciplina mental", q: "¿Necesito hacerlo HOY?",
+                    helpGeneral: "El mercado abre 5 días a la semana, miles de veces al año. Casi ninguna oportunidad real desaparece en 24 horas. La urgencia subjetiva («no me lo puedo perder») es casi siempre emoción disfrazada.",
+                    helpResponse: "Test: ¿qué cambia entre comprar hoy o el lunes que viene?\n• Si la respuesta es «nada concreto»: no es urgente.\n• Si la respuesta es «tengo unas ganas enormes»: tampoco lo es, al revés.\n• Sí es urgente si: hay un evento medible inminente (resultados, decisión regulatoria) y tu análisis ya está hecho.",
+                    helpValor: "Si llevas días pidiendo informes y entrando varios valores nuevos esta semana, probablemente el cerebro busca operar más que invertir bien. Test honesto: ¿podría esperar 48h sin pasar nada?" },
+
+                  { key: "no_revancha", group: "Disciplina mental", q: "¿No es una operación-revancha?",
+                    helpGeneral: "La operación-revancha es comprar después de una pérdida para «recuperarla», o vender en pánico tras una caída y recomprar más arriba. Es el comportamiento que más destruye carteras de particulares.",
+                    helpResponse: "Banderas rojas:\n• Acabas de vender algo en pérdida y ya estás comprando otra cosa.\n• Has tenido un día rojo y compras para «ganarle al mercado».\n• Compras un valor donde antes te equivocaste para «vengarte».\n• Operas tras leer foros, Twitter o noticias de ganancias ajenas.",
+                    helpValor: "Pregúntate: ¿qué he hecho hoy en la cartera ya? Si has vendido o comprado hace menos de 24h, la siguiente operación tiene altas papeletas de ser emocional." },
                 ];
 
                 const sellQuestions = [
-                  { key: "razon_definida", q: "¿Vendo por una razón decidida de antemano?",
-                    helpGeneral: "Solo tres legítimas: llegó al TP, saltó el SL, o se rompió la tesis. Si no, suele ser emoción.",
-                    helpValor: `${tpDist !== null ? `A un ${tpDist >= 0 ? '+' : ''}${tpDist.toFixed(1)}% del TP ($${p.target}).` : ''} ${slDist !== null ? ` Estás un ${slDist.toFixed(1)}% por encima del SL ($${slPrice}).` : ''}`.trim() || "Define TP y SL para que esta pregunta tenga referencia." },
-                  { key: "parcial_tp", q: "¿Recoger solo una parte en el TP?",
-                    helpGeneral: "Vender un tercio asegura ganancia y deja correr el resto. No es todo o nada.",
-                    helpValor: posValue > 0 ? `Posición ~$${posValue.toFixed(0)}. Un tercio sería ~$${(posValue/3).toFixed(0)}.` : "" },
-                  { key: "respetar_sl", q: "¿Respeto el SL sin moverlo?",
-                    helpGeneral: "Bajarlo cuando se acerca lo convierte en un deseo, no en un límite. El SL solo se mueve hacia arriba.",
-                    helpValor: slPrice ? `Tu SL actual: $${slPrice}. Si se acerca, no lo bajes.` : "Sin SL definido en notas." },
-                  { key: "no_emocion", q: "¿Tesis o emoción?",
-                    helpGeneral: "Un día rojo es el peaje, no una señal. Pregúntate si venderías estando verde el mismo día.",
-                    helpValor: "Si la respuesta a «¿vendería si hoy estuviese verde?» es no, probablemente sea emoción." },
+                  // ── RAZÓN OBJETIVA ──
+                  { key: "razon_objetiva", group: "Razón objetiva", q: "¿Vendo porque llegó al TP o saltó el SL?",
+                    helpGeneral: "Las dos razones más limpias para cerrar una posición. Si alcanzó tu objetivo: la tesis funcionó, cobras (parcial o total). Si saltó tu stop: la tesis no se cumplió en plazo, aceptas el error sin discutir.",
+                    helpResponse: "Test: ¿cuál de estos tres puedes marcar?\n1. «Llegó a mi TP de $X — recojo según mi plan».\n2. «Tocó mi SL de $X — fuera, sin renegociar».\n3. «Ninguna de las anteriores» — entonces es una venta emocional o por gestión activa, sigue al siguiente checkpoint.",
+                    helpValor: `${tpDist !== null ? `Estás a un ${tpDist >= 0 ? '+' : ''}${tpDist.toFixed(1)}% del TP ($${p.target}).` : 'TP no definido.'}\n${slDist !== null ? `Estás un ${slDist.toFixed(1)}% por encima del SL ($${slPrice}).` : 'SL no detectado en notas.'}` },
+
+                  { key: "tesis_rota", group: "Razón objetiva", q: "¿Se ha roto la tesis original?",
+                    helpGeneral: "Tercera razón legítima para vender (Peter Lynch): los hechos cambiaron. No la cotización — los hechos. Si lo que te hizo comprar dejó de ser cierto, vendes aunque el precio diga lo contrario.",
+                    helpResponse: "Es tesis rota si:\n• Salen resultados muy por debajo de lo esperado, con explicación estructural.\n• Pierden un cliente o contrato clave.\n• Cambio negativo de management o estrategia.\n• Aparece un riesgo nuevo (regulatorio, competitivo) que no estaba en el análisis.\n\nNO es tesis rota: «ha bajado mucho», «hay malas noticias generales», «el sector está fuera de moda esta semana».",
+                    helpValor: `Revisa tus notas: «${p.note_mid || p.note_long || p.analysis || 'sin notas guardadas'}». ¿Algún hecho concreto de los últimos días invalida lo que decía esta nota?` },
+
+                  { key: "respetar_sl", group: "Razón objetiva", q: "¿Estoy respetando el SL sin moverlo?",
+                    helpGeneral: "Un SL solo se mueve hacia ARRIBA cuando el valor sube (trailing stop). Nunca hacia abajo. Bajarlo cuando se acerca convierte el límite en un deseo, y los deseos no protegen el capital.",
+                    helpResponse: "Si estás tentado de bajar el SL porque «está muy cerca», esa tentación misma es la señal de que el SL está haciendo su trabajo. Bajarlo es como apagar la alarma contra incendios cuando suena.",
+                    helpValor: slPrice ? `Tu SL definido: $${slPrice}. ${slDist !== null && slDist < 5 ? `⚠ Estás a solo ${slDist.toFixed(1)}% por encima — si toca el SL, ejecuta sin bajarlo.` : 'Sin riesgo inminente de tocarlo ahora.'}` : "⚠ No hay SL definido. Defínelo antes de seguir." },
+
+                  { key: "rebalanceo", group: "Razón objetiva", q: "¿Vendo parcialmente para rebalancear?",
+                    helpGeneral: "Cuarta razón profesional para vender: gestión activa de cartera. Si una posición ha crecido tanto que distorsiona tu asignación deseada, vender una parte para volver al objetivo es disciplina, no emoción.",
+                    helpResponse: "Aplica cuando:\n• Una posición ha subido tanto que pesa más del % objetivo (ej: querías 10%, ahora pesa 25%).\n• Un sector entero está sobrerrepresentado.\n• Necesitas liquidez para una oportunidad mejor identificada.\n\nSiempre venta PARCIAL, no total, salvo que se cumplan también las otras razones.",
+                    helpValor: `Esta posición pesa ${posValue > 0 ? ((posValue / totalValue) * 100).toFixed(1) : '0'}% de tu cartera. Sector «${p.sector || 'sin sector'}» pesa ${sectorPct.toFixed(0)}%. ${sectorPct > 50 ? '⚠ Sector sobrerrepresentado, podría tener sentido reducir.' : ''}` },
+
+                  // ── VALIDACIÓN EMOCIONAL ──
+                  { key: "venderias_verde", group: "Validación emocional", q: "¿Venderías si HOY estuviera en verde?",
+                    helpGeneral: "El test del color: si solo se te ocurre vender los días que tu valor cae, no estás aplicando un criterio — estás reaccionando a la cotización. Las razones para vender deben ser independientes de si hoy está rojo o verde.",
+                    helpResponse: "Imagina mentalmente que el valor está hoy +5% en lugar de -5%. ¿Seguirías queriendo vender? Si la respuesta es no, lo que quieres no es vender por estrategia, es escapar del dolor. El dolor no es razón de venta.",
+                    helpValor: "Mira el cambio del día actual de tu valor. ¿Tu impulso de vender ha aparecido HOY justo porque ha caído? Si es así, espera 48h antes de decidir." },
+
+                  { key: "total_o_parcial", group: "Validación emocional", q: "¿Es venta TOTAL o PARCIAL?",
+                    helpGeneral: "La venta total casi siempre es decisión emocional («fuera de mi cartera, no quiero verlo»). La venta parcial es decisión técnica («recojo un tercio, mantengo dos tercios»). Si estás pensando en vender el 100%, comprueba que sea por SL ejecutado o tesis rota completamente — no por miedo.",
+                    helpResponse: "Reglas profesionales:\n• En TP: vender 1/3 o 1/2, dejar correr el resto.\n• En SL: vender 100%, sin discusión.\n• En tesis rota: vender 100% si la ruptura es total, parcial si es parcial.\n• En rebalanceo: vender solo lo que sobre, no todo.",
+                    helpValor: posValue > 0 ? `Tu posición es ~$${posValue.toFixed(0)}. Vender 1/3 = ~$${(posValue/3).toFixed(0)}, 1/2 = ~$${(posValue/2).toFixed(0)}. ¿Cuál encaja con la razón objetiva que has identificado arriba?` : "" },
                 ];
 
-                const renderQuestion = (Q, group) => {
+                const renderQuestion = (Q) => {
                   const checked = !!c[Q.key];
                   const isOpen = expandedQ === Q.key;
                   return (
@@ -963,20 +1011,58 @@ export default function App() {
                         <span style={{ color: C.inkDim, fontSize: 14, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>⌄</span>
                       </div>
                       {isOpen && (
-                        <div style={{ background: C.bg, borderRadius: 12, padding: 12, marginTop: 4, fontSize: 12, lineHeight: 1.5, color: C.inkDim }}>
-                          <div style={{ marginBottom: Q.helpValor ? 8 : 0 }}>{Q.helpGeneral}</div>
+                        <div style={{ background: C.bg, borderRadius: 12, padding: 14, marginTop: 4, fontSize: 12.5, lineHeight: 1.55, color: C.inkDim, display: "flex", flexDirection: "column", gap: 10 }}>
+                          {/* Definición */}
+                          <div>
+                            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, color: C.inkDim, fontWeight: 700, marginBottom: 4, letterSpacing: 0.4 }}>
+                              QUÉ SE PREGUNTA
+                            </div>
+                            <div style={{ color: C.ink }}>{Q.helpGeneral}</div>
+                          </div>
+                          {/* Cómo responder bien */}
+                          {Q.helpResponse && (
+                            <div>
+                              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, color: C.accent, fontWeight: 700, marginBottom: 4, letterSpacing: 0.4 }}>
+                                CÓMO VALIDARLA
+                              </div>
+                              <div style={{ color: C.ink, whiteSpace: "pre-line" }}>{Q.helpResponse}</div>
+                            </div>
+                          )}
+                          {/* Datos del valor */}
                           {Q.helpValor && (
-                            <div style={{ background: C.card, borderRadius: 8, padding: 10, color: C.ink, fontSize: 12 }}>
-                              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, color: C.accent, fontWeight: 700, marginBottom: 4, letterSpacing: 0.3 }}>
+                            <div style={{ background: C.card, borderRadius: 10, padding: 12 }}>
+                              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, color: C.accent, fontWeight: 700, marginBottom: 6, letterSpacing: 0.4 }}>
                                 EN TU CASO · {p.symbol}
                               </div>
-                              {Q.helpValor}
+                              <div style={{ color: C.ink, whiteSpace: "pre-line" }}>{Q.helpValor}</div>
+                            </div>
+                          )}
+                          {/* Bandera roja */}
+                          {Q.redFlag && (
+                            <div style={{ background: `${C.sell}15`, borderRadius: 10, padding: 12, border: `1px solid ${C.sell}44` }}>
+                              <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, color: C.sell, fontWeight: 700, marginBottom: 4, letterSpacing: 0.4 }}>
+                                ⚠ BANDERA ROJA
+                              </div>
+                              <div style={{ color: C.ink }}>{Q.redFlag}</div>
                             </div>
                           )}
                         </div>
                       )}
                     </div>
                   );
+                };
+
+                // Renderiza una lista de preguntas agrupadas por bloque
+                const renderGrouped = (questions) => {
+                  const groups = [...new Set(questions.map((q) => q.group))];
+                  return groups.map((g) => (
+                    <div key={g} style={{ marginBottom: 14 }}>
+                      <div style={{ fontFamily: FONT_DISPLAY, fontSize: 10, fontWeight: 700, color: C.inkDim, letterSpacing: 0.6, marginBottom: 8, paddingLeft: 2 }}>
+                        ─ {g.toUpperCase()}
+                      </div>
+                      {questions.filter((q) => q.group === g).map((Q) => renderQuestion(Q))}
+                    </div>
+                  ));
                 };
 
                 return (
@@ -990,7 +1076,7 @@ export default function App() {
                           {status.buyCount}/{status.buyTotal} {status.buyDone ? "✓" : ""}
                         </div>
                       </div>
-                      {buyQuestions.map((Q) => renderQuestion(Q, "buy"))}
+                      {renderGrouped(buyQuestions)}
                     </div>
 
                     {status.buyDone && (
@@ -1007,7 +1093,7 @@ export default function App() {
                         <div style={{ fontSize: 11, color: C.inkDim, marginBottom: 12, lineHeight: 1.4, fontStyle: "italic" }}>
                           Usar cuando estés planteándote vender. La app no decide por ti — solo pone los hechos delante.
                         </div>
-                        {sellQuestions.map((Q) => renderQuestion(Q, "sell"))}
+                        {renderGrouped(sellQuestions)}
                       </div>
                     )}
                   </div>
